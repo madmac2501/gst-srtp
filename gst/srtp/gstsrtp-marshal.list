@@ -1,0 +1,5 @@
+# glib-genmarshal --header --prefix=gst_srtp srtp_marshal.marshal > srtp_marshal.h
+# glib-genmarshal --body --prefix=gst_srtp srtp_marshal.marshal > srtp_marshal.c
+
+BOXED:UINT
+VOID:UINT
