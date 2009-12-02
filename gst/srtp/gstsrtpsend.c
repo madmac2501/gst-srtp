@@ -89,24 +89,6 @@
  * subsequent packet is dropped, until a new key is set and the stream
  * has been updated.
  *
- *
- *
- * 
- *
- *
- *
- *
- * 
- *
- *
- *
- *
- * 
- *
- *
- *
- *
- *
  * <refsect2>
  * <title>Example pipeline</title>
  * |[
