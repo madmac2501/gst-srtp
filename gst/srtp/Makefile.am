@@ -39,8 +39,6 @@ noinst_HEADERS = \
   gstsrtpsend.h \
   gstsrtprecv.h
 
-CLEANFILES = $(BUILT_SOURCES)
-
 EXTRA_DIST = gstsrtp-marshal.list
 
 SUBDIRS = libsrtp

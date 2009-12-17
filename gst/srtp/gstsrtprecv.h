@@ -47,8 +47,8 @@
 #define __GST_SRTPRECV_H__
 
 #include <gst/gst.h>
-#include <srtp/srtp.h>
-#include <srtp/srtp_priv.h>
+#include "srtp/srtp.h"
+#include "srtp/srtp_priv.h"
 
 G_BEGIN_DECLS
 
@@ -78,7 +78,7 @@ struct _GstSrtpRecv
   gboolean ask_update;
   srtp_t session;
   gboolean first_session;
-  GSList *streams;
+  GHashTable *streams;
 };
 
 struct _GstSrtpRecvClass 
@@ -86,6 +86,7 @@ struct _GstSrtpRecvClass
   GstElementClass parent_class;
 
   GstCaps* (*get_caps) (GstSrtpRecv *filter, guint ssrc);
+  GstCaps* (*new_caps) (GstSrtpRecv *filter, guint ssrc);
   void (*clear_streams) (GstSrtpRecv * filter);
   void (*soft_limit) (GstSrtpRecv *filter, guint ssrc);
   void (*hard_limit) (GstSrtpRecv *filter, guint ssrc);

@@ -7,7 +7,7 @@ endif
 if BUILD_EXAMPLES
 SUBDIRS_EXAMPLES = examples
 else
-SUBDIRS_EXAMPLES =
+SUBDIRS_EXAMPLES = examples
 endif
 
 SUBDIRS = $(SUBDIRS_CHECK) $(SUBDIRS_EXAMPLES) files icles

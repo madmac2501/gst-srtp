@@ -52,105 +52,67 @@
 #define AUDIO_ENC  "alawenc"
 #define AUDIO_PAY  "rtppcmapay"
 
-struct SrtpRecvCaps
+#define AES_128_ICM       1
+#define NULL_CIPHER       0
+#define STRONGHOLD_CIPHER 1
+
+#define HMAC_SHA1         3
+#define NULL_AUTH         0
+#define STRONGHOLD_AUTH   3
+
+struct SrtpSendCaps
 {
   gchar *key;
-  int rtp_cipher;
-  int rtp_auth;
-  int rtcp_cipher;
-  int rtcp_auth;
+  gchar *rtp_cipher;
+  gchar *rtp_auth;
+  gchar *rtcp_cipher;
+  gchar *rtcp_auth;
 };
 
-static int
-get_auth_property (char *prop)
+static void
+get_auth_property (gchar * auth, char *prop)
 {
-  int ret = HMAC_SHA1;
+  if (auth == NULL) {
+    g_print ("Error: NULL pointer\n");
+    return;
+  }
 
   if (g_strcmp0 (prop, "HMAC_SHA1") == 0) {
     g_print ("HMAC_SHA1\n");
-    ret = HMAC_SHA1;
+    memcpy ((void *) auth, "HMAC_SHA1", 9);
   } else if (g_strcmp0 (prop, "NULL_AUTH") == 0) {
     g_print ("NULL_AUTH\n");
-    ret = NULL_AUTH;
+    memcpy ((void *) auth, "NULL_AUTH", 9);
   } else if (g_strcmp0 (prop, "STRONGHOLD_AUTH") == 0) {
     g_print ("STRONGHOLD_AUTH\n");
-    ret = STRONGHOLD_AUTH;
+    memcpy ((void *) auth, "STRONGHOLD_AUTH", 15);
   } else {
-    g_print ("(default) HMAC_SHA1\n");
+    g_print ("Unknown value, using (default) HMAC_SHA1\n");
+    memcpy ((void *) auth, "HMAC_SHA1", 9);
   }
-
-  return ret;
 }
 
-static int
-get_cipher_property (char *prop)
+static void
+get_cipher_property (gchar * cipher, char *prop)
 {
-  int ret = AES_128_ICM;
+  if (cipher == NULL) {
+    g_print ("Error: NULL pointer");
+    return;
+  }
 
   if (g_strcmp0 (prop, "AES_128_ICM") == 0) {
     g_print ("AES_128_ICM\n");
-    ret = AES_128_ICM;
+    memcpy ((void *) cipher, "AES_128_ICM", 11);
   } else if (g_strcmp0 (prop, "NULL_CIPHER") == 0) {
     g_print ("NULL_CIPHER\n");
-    ret = NULL_CIPHER;
+    memcpy ((void *) cipher, "NULL_CIPHER", 11);
   } else if (g_strcmp0 (prop, "STRONGHOLD_CIPHER") == 0) {
     g_print ("STRONGHOLD_CIPHER\n");
-    ret = STRONGHOLD_CIPHER;
+    memcpy ((void *) cipher, "STRONGHOLD_CIPHER", 17);
   } else {
-    g_print ("(default) AES_128_ICM\n");
+    g_print ("Unknown value, using (default) AES_128_ICM\n");
+    memcpy ((void *) cipher, "AES_128_ICM", 11);
   }
-
-  return ret;
-}
-
-/* print the stats of a source */
-static void
-print_source_stats (GObject * source)
-{
-  GstStructure *stats;
-  gchar *str;
-
-  /* get the source stats */
-  g_object_get (source, "stats", &stats, NULL);
-
-  /* simply dump the stats structure */
-  str = gst_structure_to_string (stats);
-  g_print ("source stats: %s\n", str);
-
-  gst_structure_free (stats);
-  g_free (str);
-}
-
-/* this function is called every second and dumps the RTP manager stats */
-static gboolean
-print_stats (GstElement * rtpbin)
-{
-  GObject *session;
-  GValueArray *arr;
-  GValue *val;
-  guint i;
-
-  g_print ("***********************************\n");
-
-  /* get session 0 */
-  g_signal_emit_by_name (rtpbin, "get-internal-session", 0, &session);
-
-  /* print all the sources in the session, this includes the internal source */
-  g_object_get (session, "sources", &arr, NULL);
-
-  for (i = 0; i < arr->n_values; i++) {
-    GObject *source;
-
-    val = g_value_array_get_nth (arr, i);
-    source = g_value_get_object (val);
-
-    print_source_stats (source);
-  }
-  g_value_array_free (arr);
-
-  g_object_unref (session);
-
-  return TRUE;
 }
 
 /* Get an input from stdin and remove trailing newline
@@ -179,19 +141,20 @@ get_user_input (gchar * input, int len)
 
 /* Ask user for new parameters
  */
-static int
-get_srtp_recv_caps (guint ssrc, SrtpRecvCaps * recvcaps, gboolean key_only)
+static guint
+get_srtp_recv_caps (guint ssrc, struct SrtpSendCaps *sendcaps,
+    gboolean key_only)
 {
   int ret;
   gchar *input;
 
-  if (recvcaps == NULL)
+  if (sendcaps == NULL)
     return 0;
 
   input = g_new0 (gchar, 81);
 
-  g_free (recvcaps->key);
-  recvcaps->key = g_new0 (gchar, 30);
+  g_free (sendcaps->key);
+  sendcaps->key = g_new0 (gchar, 30);
 
   /* Ask for the master key */
   g_print ("Please enter the master key for SSRC %d: ", ssrc);
@@ -200,61 +163,73 @@ get_srtp_recv_caps (guint ssrc, SrtpRecvCaps * recvcaps, gboolean key_only)
   if (ret < 1) {
     g_print ("You failed to specify a master key\n\n");
     g_free (input);
-    g_free (recvcaps->key);
+    g_free (sendcaps->key);
     return 0;
   }
 
-  memcpy ((void *) recvcaps->key, (void *) input, strlen (input));
+  memcpy ((void *) sendcaps->key, (void *) input, strlen (input));
 
   /* Ask for other parameters, unless asked not to */
   if (key_only == FALSE) {
 
     /* Ask for the RTP cipher */
+    g_free (sendcaps->rtp_cipher);
+    sendcaps->rtp_cipher = g_new0 (gchar, 18);
+
     g_print ("Please enter the RTP cipher for SSRC %d: ", ssrc);
     ret = get_user_input (input, 18);
 
     if (ret < 1) {
       g_print
-          ("You failed to specify an RTP cipher. Using default AES_128_ICM\n\n");
-      recvcaps->rtp_cipher = AES_128_ICM;
+          ("\nYou failed to specify an RTP cipher. Using default AES_128_ICM\n\n");
+      memcpy ((void *) sendcaps->rtp_cipher, "AES_128_ICM", 11);
     } else {
-      recvcaps->rtp_cipher = get_cipher_property (input);
+      get_cipher_property (sendcaps->rtp_cipher, input);
     }
 
     /* Ask for the RTP auth */
+    g_free (sendcaps->rtp_auth);
+    sendcaps->rtp_auth = g_new0 (gchar, 16);
+
     g_print ("Please enter the RTP authentication for SSRC %d: ", ssrc);
     ret = get_user_input (input, 16);
 
     if (ret < 1) {
       g_print
           ("You failed to specify an RTP authentication. Using default HMAC_SHA1\n\n");
-      recvcaps->rtp_auth = HMAC_SHA1;
+      memcpy ((void *) sendcaps->rtp_auth, "HMAC_SHA1", 9);
     } else {
-      recvcaps->rtp_auth = get_auth_property (input);
+      get_auth_property (sendcaps->rtp_auth, input);
     }
 
     /* Ask for the RTCP cipher */
+    g_free (sendcaps->rtcp_cipher);
+    sendcaps->rtcp_cipher = g_new0 (gchar, 18);
+
     g_print ("Please enter the RTCP cipher for SSRC %d: ", ssrc);
     ret = get_user_input (input, 18);
 
     if (ret < 1) {
       g_print
           ("You failed to specify an RTCP cipher. Using default AES_128_ICM\n\n");
-      recvcaps->rtcp_cipher = AES_128_ICM;
+      memcpy ((void *) sendcaps->rtcp_cipher, "AES_128_ICM", 11);
     } else {
-      recvcaps->rtcp_cipher = get_cipher_property (input);
+      get_cipher_property (sendcaps->rtcp_cipher, input);
     }
 
     /* Ask for the RTCP auth */
+    g_free (sendcaps->rtcp_auth);
+    sendcaps->rtcp_auth = g_new0 (gchar, 16);
+
     g_print ("Please enter the RTCP authentication for SSRC %d: ", ssrc);
     ret = get_user_input (input, 16);
 
     if (ret < 1) {
       g_print
           ("You failed to specify an RTCP authentication. Using default HMAC_SHA1\n\n");
-      recvcaps->rtcp_auth = HMAC_SHA1;
+      memcpy ((void *) sendcaps->rtcp_auth, "HMAC_SHA1", 9);
     } else {
-      recvcaps->rtcp_auth = get_auth_property (input);
+      get_auth_property (sendcaps->rtcp_auth, input);
     }
   }
 
@@ -265,43 +240,73 @@ get_srtp_recv_caps (guint ssrc, SrtpRecvCaps * recvcaps, gboolean key_only)
 
 /* will be called when srtprecv reached the hard limit on its master key
  */
-static GstCaps *
-hard_limit_cb (GstElement * srtpenc, guint ssrc, SrtpRecvCaps * recvcaps)
+static guint
+hard_limit_cb (GstElement * srtpenc, guint ssrc, struct SrtpSendCaps *sendcaps)
 {
-  GstCaps *caps = NULL;
-  gchar input[31];
-  int ret;
+  guint ret;
 
   g_print ("Asked to change master key after hard limit\n");
-  ret = get_srtp_recv_caps (ssrc, recvcaps, TRUE);
+  ret = get_srtp_recv_caps (ssrc, sendcaps, TRUE);
 
   if (ret == 0) {
     g_print ("-> Invalid parameters\n");
   } else {
     /* Set properties on srtpenc */
-    g_object_set (rtpsrc, "key", recvpads->key, "rtp_c", recvpads->rtp_cipher,
-        "rtp_a", recvpads->rtp_auth, "rtcp_c", recvpads->rtcp_cipher, "rtcp_a",
-        recvpads->rtcp_auth, NULL);
+    g_print ("Setting property on object\n");
+    g_object_set (srtpenc, "key", sendcaps->key, "rtp-cipher",
+        sendcaps->rtp_cipher, "rtp-auth", sendcaps->rtp_auth, "rtcp-cipher",
+        sendcaps->rtcp_cipher, "rtcp-auth", sendcaps->rtcp_auth, NULL);
   }
 
-  return caps;
+  return ret;
+}
+
+/* will be called when srtprecv reached the index limit
+ */
+static guint
+index_limit_cb (GstElement * srtpenc, guint ssrc, struct SrtpSendCaps *sendcaps)
+{
+  guint ret;
+
+  g_print ("Asked to change parameters after index limit\n");
+  ret = get_srtp_recv_caps (ssrc, sendcaps, TRUE);
+
+  if (ret == 0) {
+    g_print ("-> Invalid parameters\n");
+  } else {
+    /* Set properties on srtpenc */
+    g_print ("Setting property on object\n");
+    g_object_set (srtpenc, "key", sendcaps->key, "rtp-cipher",
+        sendcaps->rtp_cipher, "rtp-auth", sendcaps->rtp_auth, "rtcp-cipher",
+        sendcaps->rtcp_cipher, "rtcp-auth", sendcaps->rtcp_auth, NULL);
+  }
+
+  return ret;
+}
+
+static void
+soft_limit_cb (GstElement * srtpenc, guint ssrc, struct SrtpSendCaps *sendcaps)
+{
+  g_print ("soft limit\n");
 }
 
 /* Check arguments on command line to get parameters
  */
 static int
-check_args (int argc, char *argv[], SrtpRecvCaps * recvcaps)
+check_args (int argc, char *argv[], struct SrtpSendCaps *sendcaps)
 {
   int len;
 
-  if (recvcaps == NULL)
+  if (sendcaps == NULL) {
+    g_print ("\nError: NULL pointer");
     return 0;
+  }
 
   if (argc < 2) {
     g_print ("\nInvalid call to %s : first argument is mandatory.\n\n",
         argv[0]);
     g_print
-        ("%s  master_key  [rtp_cipher]  [rtp_auth]  [rtcp_cipher]  [rtcp_auth]\n\n",
+        ("Usage: %s  master_key  [rtp_cipher]  [rtp_auth]  [rtcp_cipher]  [rtcp_auth]\n\n",
         argv[0]);
     g_print
         ("- master_key  : Key used for encryption and decryption (mandatory)\n");
@@ -309,20 +314,21 @@ check_args (int argc, char *argv[], SrtpRecvCaps * recvcaps)
     g_print ("- rtp_auth    : Authentication mecanism used for RTP\n");
     g_print ("- rtcp_cipher : Encryption mecanism used for RTCP\n");
     g_print ("- rtcp_cipher : Authentication mecanism used for RTCP\n\n");
-    g_print ("Encryption mecanisms:\n- AES_128_ICM\n- NULL\n");
-    g_print ("Authentication mecanisms:\n- HMAC_SHA1\n- NULL\n\n");
+    g_print ("Encryption mecanisms:\n- AES_128_ICM (default)\n- NULL\n");
+    g_print ("Authentication mecanisms:\n- HMAC_SHA1 (default)\n- NULL\n\n");
     g_print
         ("NOTE: For RTCP, authentication mecanism cannot be NULL if cipher is non-NULL.\n\n");
 
     return 0;
   } else {
-    recvcaps->rtp_cipher = AES_128_ICM;
-    recvcaps->rtp_auth = HMAC_SHA1;
-    recvcaps->rtcp_cipher = AES_128_ICM;
-    recvcaps->rtcp_auth = HMAC_SHA1;
+
+    sendcaps->key = g_new0 (gchar, 30);
+    sendcaps->rtp_cipher = g_new0 (gchar, 18);
+    sendcaps->rtp_auth = g_new0 (gchar, 16);
+    sendcaps->rtcp_cipher = g_new0 (gchar, 18);
+    sendcaps->rtcp_auth = g_new0 (gchar, 16);
 
     /* copy key to structure */
-    recvcaps->key = g_new0 (gchar, 30);
     len = strlen (argv[1]);
     if (len > 30) {
       g_print
@@ -330,50 +336,47 @@ check_args (int argc, char *argv[], SrtpRecvCaps * recvcaps)
       len = 30;
     }
 
-    memcpy ((void *) recvcaps->key, (void *) argv[1], len);
-    g_print ("\nMaster key: %s\n\n", recvcaps->key);
+    memcpy ((void *) sendcaps->key, (void *) argv[1], len);
+    g_print ("\nMaster key: %s\n", sendcaps->key);
 
     /* get cipher and auth */
-    if (argc > 2) {
+    if (argc > 2 && !g_str_has_prefix (argv[2], "--")) {
       g_print ("RTP cipher : ");
-      recvcaps->rtp_cipher = get_cipher_property (argv[2]);
+      get_cipher_property (sendcaps->rtp_cipher, argv[2]);
     } else {
-      g_print ("RTP cipher : (default) HMAC_SHA1\n");
+      g_print ("RTP cipher : (default) AES_128_ICM\n");
+      memcpy ((void *) sendcaps->rtp_cipher, "AES_128_ICM", 11);
     }
 
-    if (argc > 3) {
+    if (argc > 3 && !g_str_has_prefix (argv[3], "--")) {
       g_print ("RTP authentication : ");
-      recvcaps->rtp_auth = get_auth_property (argv[3]);
+      get_auth_property (sendcaps->rtp_auth, argv[3]);
     } else {
-      g_print ("RTP authentication : (default) AES_128_ICM\n");
+      g_print ("RTP authentication : (default) HMAC_SHA1\n");
+      memcpy ((void *) sendcaps->rtp_auth, "HMAC_SHA1", 9);
     }
 
-    if (argc > 4) {
+    if (argc > 4 && !g_str_has_prefix (argv[4], "--")) {
       g_print ("RTCP cipher : ");
-      recvcaps->rtcp_cipher = get_cipher_property (argv[4]);
+      get_cipher_property (sendcaps->rtcp_cipher, argv[4]);
     } else {
-      g_print ("RTCP cipher : (default) HMAC_SHA1\n");
+      g_print ("RTCP cipher : (default) AES_128_ICM\n");
+      memcpy ((void *) sendcaps->rtcp_cipher, "AES_128_ICM", 11);
     }
 
-    if (argc > 5) {
+    if (argc > 5 && !g_str_has_prefix (argv[5], "--")) {
       g_print ("RTCP authentication : ");
-      recvcaps->rtcp_auth = get_auth_property (argv[5]);
+      get_auth_property (sendcaps->rtcp_auth, argv[5]);
     } else {
-      g_print ("RTCP authentication : (default) AES_128_ICM\n");
+      g_print ("RTCP authentication : (default) HMAC_SHA1\n");
+      memcpy ((void *) sendcaps->rtcp_auth, "HMAC_SHA1", 9);
     }
 
     return argc;
   }
 }
 
-/* build a pipeline equivalent to:
- *
- * gst-launch -v gstrtpbin name=rtpbin \
- *    $AUDIO_SRC ! audioconvert ! audioresample ! $AUDIO_ENC ! $AUDIO_PAY ! rtpbin.send_rtp_sink_0  \
- *           rtpbin.send_rtp_src_0 ! udpsink port=5002 host=$DEST                      \
- *           rtpbin.send_rtcp_src_0 ! udpsink port=5003 host=$DEST sync=false async=false \
- *        udpsrc port=5007 ! rtpbin.recv_rtcp_sink_0
- */
+
 int
 main (int argc, char *argv[])
 {
@@ -383,11 +386,14 @@ main (int argc, char *argv[])
   GMainLoop *loop;
   gboolean res;
   GstPadLinkReturn lres;
-  GstPad *srcpad, *sinkpad;
-  SrtpRecvCaps *recvcaps;
+  GstPad *srcpad, *srcpad1, *sinkpad, *sinkpad1, *sinkpad2, *sinkpad3,
+      *sinkpad4;
+  GstIterator *it;
+  GstIteratorResult itres;
+  struct SrtpSendCaps *sendcaps;
 
-  recvcaps->key = NULL;
-  if (check_args (argc, argv, recvcaps) == 0)
+  sendcaps = g_slice_new0 (struct SrtpSendCaps);
+  if (check_args (argc, argv, sendcaps) == 0)
     return 0;
 
   /* always init first */
@@ -427,9 +433,10 @@ main (int argc, char *argv[])
   /* the srtpsend element */
   srtpenc = gst_element_factory_make ("srtpsend", "srtpenc");
   g_assert (srtpenc);
-  g_object_set (rtpsrc, "key", recvpads->key, "rtp_c", recvpads->rtp_cipher,
-      "rtp_a", recvpads->rtp_auth, "rtcp_c", recvpads->rtcp_cipher, "rtcp_a",
-      recvpads->rtcp_auth, NULL);
+
+  g_object_set (srtpenc, "key", sendcaps->key, "rtp-cipher",
+      sendcaps->rtp_cipher, "rtp-auth", sendcaps->rtp_auth, "rtcp-cipher",
+      sendcaps->rtcp_cipher, "rtcp-auth", sendcaps->rtcp_auth, NULL);
 
   gst_bin_add (GST_BIN (pipeline), srtpenc);
 
@@ -451,23 +458,27 @@ main (int argc, char *argv[])
   gst_bin_add_many (GST_BIN (pipeline), rtpsink, rtcpsink, rtcpsrc, NULL);
 
   /* now link all to the rtpbin, start by getting an RTP sinkpad for session 0 */
-  sinkpad = gst_element_get_request_pad (rtpbin, "send_rtp_sink_0");
+  sinkpad1 = gst_element_get_request_pad (rtpbin, "send_rtp_sink_0");
   srcpad = gst_element_get_static_pad (audiopay, "src");
-  lres = gst_pad_link (srcpad, sinkpad);
+  lres = gst_pad_link (srcpad, sinkpad1);
   g_assert (lres == GST_PAD_LINK_OK);
   gst_object_unref (srcpad);
 
   /* get the RTP srcpad that was created when we requested the sinkpad above and
    * link it to the srtpenc sinkpad */
   srcpad = gst_element_get_static_pad (rtpbin, "send_rtp_src_0");
-  sinkpad = gst_element_get_request_pad (srtpenc, "rtp_sink_0");
-  lres = gst_pad_link (srcpad, sinkpad);
+  sinkpad2 = gst_element_get_request_pad (srtpenc, "rtp_sink_0");
+  lres = gst_pad_link (srcpad, sinkpad2);
   g_assert (lres == GST_PAD_LINK_OK);
   gst_object_unref (srcpad);
 
   /* get the RTP srcpad that was created when we requested the sinkpad above and
    * link it to the rtpsink sinkpad*/
-  srcpad = gst_element_get_static_pad (srtpenc, "rtp_src_0");
+  it = gst_pad_iterate_internal_links (sinkpad2);
+  itres = gst_iterator_next (it, (gpointer *) & srcpad);
+  gst_iterator_free (it);
+  g_assert (itres == GST_ITERATOR_OK);
+
   sinkpad = gst_element_get_static_pad (rtpsink, "sink");
   lres = gst_pad_link (srcpad, sinkpad);
   g_assert (lres == GST_PAD_LINK_OK);
@@ -475,44 +486,70 @@ main (int argc, char *argv[])
   gst_object_unref (sinkpad);
 
   /* get an RTCP srcpad for sending RTCP to the srtpenc  */
-  srcpad = gst_element_get_request_pad (rtpbin, "send_rtcp_src_0");
-  sinkpad = gst_element_get_request_pad (srtpenc, "rtcp_sink_0");
-  lres = gst_pad_link (srcpad, sinkpad);
+  srcpad1 = gst_element_get_request_pad (rtpbin, "send_rtcp_src_0");
+  sinkpad3 = gst_element_get_request_pad (srtpenc, "rtcp_sink_0");
+  lres = gst_pad_link (srcpad1, sinkpad3);
   g_assert (lres == GST_PAD_LINK_OK);
 
   /* get the RTCP srcpad that was created when we requested the sinkpad above and
    * link it to the rtcpsink sinkpad*/
-  srcpad = gst_element_get_request_pad (srtpenc, "rtcp_src_0");
+  it = gst_pad_iterate_internal_links (sinkpad3);
+  itres = gst_iterator_next (it, (gpointer *) & srcpad);
+  gst_iterator_free (it);
+  g_assert (itres == GST_ITERATOR_OK);
+
   sinkpad = gst_element_get_static_pad (rtcpsink, "sink");
   lres = gst_pad_link (srcpad, sinkpad);
   g_assert (lres == GST_PAD_LINK_OK);
+  gst_object_unref (srcpad);
   gst_object_unref (sinkpad);
 
   /* we also want to receive RTCP, request an RTCP sinkpad for session 0 and
    * link it to the srcpad of the udpsrc for RTCP */
   srcpad = gst_element_get_static_pad (rtcpsrc, "src");
-  sinkpad = gst_element_get_request_pad (rtpbin, "recv_rtcp_sink_0");
-  lres = gst_pad_link (srcpad, sinkpad);
+  sinkpad4 = gst_element_get_request_pad (rtpbin, "recv_rtcp_sink_0");
+  lres = gst_pad_link (srcpad, sinkpad4);
   g_assert (lres == GST_PAD_LINK_OK);
   gst_object_unref (srcpad);
 
   /* Connect to signal */
+  loop = g_main_loop_new (NULL, FALSE);
   g_signal_connect (srtpenc, "hard-limit", G_CALLBACK (hard_limit_cb),
-      recvpads);
+      sendcaps);
+  g_signal_connect (srtpenc, "index-limit", G_CALLBACK (index_limit_cb),
+      sendcaps);
+  g_signal_connect (srtpenc, "soft-limit", G_CALLBACK (soft_limit_cb),
+      sendcaps);
 
   /* set the pipeline to playing */
   g_print ("starting sender pipeline\n");
   gst_element_set_state (pipeline, GST_STATE_PLAYING);
 
-  /* print stats every second */
-  g_timeout_add (1000, (GSourceFunc) print_stats, rtpbin);
-
   /* we need to run a GLib main loop to get the messages */
-  loop = g_main_loop_new (NULL, FALSE);
   g_main_loop_run (loop);
 
+  /* clean up */
   g_print ("stopping sender pipeline\n");
   gst_element_set_state (pipeline, GST_STATE_NULL);
+
+  g_main_loop_unref (loop);
+
+  g_slice_free (struct SrtpSendCaps, sendcaps);
+
+  gst_element_release_request_pad (rtpbin, sinkpad4);
+  gst_object_unref (sinkpad4);
+
+  gst_element_release_request_pad (srtpenc, sinkpad3);
+  gst_object_unref (sinkpad3);
+
+  gst_element_release_request_pad (rtpbin, srcpad1);
+
+  gst_element_release_request_pad (srtpenc, sinkpad2);
+  gst_object_unref (sinkpad2);
+
+  gst_element_release_request_pad (rtpbin, sinkpad1);
+
+  gst_object_unref (pipeline);
 
   return 0;
 }

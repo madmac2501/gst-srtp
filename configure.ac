@@ -89,7 +89,7 @@ AG_GST_ARG_ENABLE_EXTERNAL
 AG_GST_ARG_ENABLE_EXPERIMENTAL
 
 dnl *** checks for platform ***
-AG_GST_PLATFORM
+dnl AG_GST_PLATFORM
 
 dnl * hardware/architecture *
 
@@ -2165,6 +2165,7 @@ tests/examples/directfb/Makefile
 tests/examples/mxf/Makefile
 tests/examples/scaletempo/Makefile
 tests/examples/opencv/Makefile
+tests/examples/srtp/Makefile
 tests/icles/Makefile
 ext/voamrwbenc/Makefile
 ext/voaacenc/Makefile

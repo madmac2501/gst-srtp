@@ -114,10 +114,12 @@ GST_DEBUG_CATEGORY_STATIC (gst_srtp_recv_debug);
 /* Filter signals and args */
 enum
 {
-  SIGNAL_GET_CAPS,
+  SIGNAL_GET_CAPS = 1,
+  SIGNAL_NEW_CAPS,
   SIGNAL_CLEAR_STREAMS,
   SIGNAL_SOFT_LIMIT,
   SIGNAL_HARD_LIMIT,
+  SIGNAL_INDEX_LIMIT,
   LAST_SIGNAL
 };
 
@@ -249,29 +251,102 @@ gst_srtp_recv_class_init (GstSrtpRecvClass * klass)
       g_param_spec_boolean ("use_caps", "Use_caps",
           "Use caps instead of signals?", FALSE, G_PARAM_READWRITE));
 
-  /* Install signals */
+  /**
+   * GstSrtpRecv::get-caps:
+   * @gstsrtprecv: the element on which the signal is emitted
+   * @ssrc: The unique SSRC of the stream
+   *
+   * Signal emited to get the parameters relevant to stream
+   * with @ssrc. User should provide the key and the RTP and
+   * RTCP encryption ciphers and authentication, and return
+   * them wrapped in a GstCaps.
+   */
   gst_srtp_recv_signals[SIGNAL_GET_CAPS] =
       g_signal_new ("get-caps", G_TYPE_FROM_CLASS (klass),
       G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstSrtpRecvClass,
           get_caps), NULL, NULL, gst_srtp_marshal_BOXED__UINT,
       GST_TYPE_CAPS, 1, G_TYPE_UINT);
 
+  /**
+   * GstSrtpRecv::new-caps:
+   * @gstsrtprecv: the element on which the signal is emitted
+   * @ssrc: The unique SSRC of the stream
+   *
+   * Signal emited when the stream with @ssrc could not be found
+   * or internal parameters used to unprotect are erronous. User
+   * should provide a new key and new RTP and RTCP encryption
+   * ciphers and authentication, and return them wrapped in a
+   * GstCaps.
+   */
+  gst_srtp_recv_signals[SIGNAL_NEW_CAPS] =
+      g_signal_new ("new-caps", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstSrtpRecvClass,
+          new_caps), NULL, NULL, gst_srtp_marshal_BOXED__UINT,
+      GST_TYPE_CAPS, 1, G_TYPE_UINT);
+
+  /**
+   * GstSrtpRecv::clear-streams:
+   * @gstsrtprecv: the element on which the signal is emitted
+   *
+   * Clear the internal list of streams
+   */
   gst_srtp_recv_signals[SIGNAL_CLEAR_STREAMS] =
       g_signal_new ("clear-streams", G_TYPE_FROM_CLASS (klass),
       G_SIGNAL_RUN_LAST | G_SIGNAL_ACTION,
       G_STRUCT_OFFSET (GstSrtpRecvClass, clear_streams), NULL, NULL,
       g_cclosure_marshal_VOID__VOID, G_TYPE_NONE, 0, G_TYPE_NONE);
 
+  /**
+   * GstSrtpRecv::soft-limit:
+   * @gstsrtprecv: the element on which the signal is emitted
+   * @ssrc: The unique SSRC of the stream
+   *
+   * Signal emited when the stream with @ssrc has reached the
+   * soft limit of utilisation of it's master encryption key.
+   * User should provide a new key and new RTP and RTCP encryption
+   * ciphers and authentication, and return them wrapped in a
+   * GstCaps.
+   */
   gst_srtp_recv_signals[SIGNAL_SOFT_LIMIT] =
       g_signal_new ("soft-limit", G_TYPE_FROM_CLASS (klass),
       G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstSrtpRecvClass,
           soft_limit), NULL, NULL, gst_srtp_marshal_BOXED__UINT,
       GST_TYPE_CAPS, 1, G_TYPE_UINT);
 
+  /**
+   * GstSrtpRecv::hard-limit:
+   * @gstsrtprecv: the element on which the signal is emitted
+   * @ssrc: The unique SSRC of the stream
+   *
+   * Signal emited when the stream with @ssrc has reached the
+   * hard limit of utilisation of it's master encryption key.
+   * User should provide a new key and new RTP and RTCP encryption
+   * ciphers and authentication, and return them wrapped in a
+   * GstCaps. If user could not provide those parameters or signal
+   * is not answered, the buffers of this stream will be dropped.
+   */
   gst_srtp_recv_signals[SIGNAL_HARD_LIMIT] =
       g_signal_new ("hard-limit", G_TYPE_FROM_CLASS (klass),
       G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstSrtpRecvClass,
           hard_limit), NULL, NULL, gst_srtp_marshal_BOXED__UINT,
+      GST_TYPE_CAPS, 1, G_TYPE_UINT);
+
+  /**
+   * GstSrtpRecv::index-limit:
+   * @gstsrtprecv: the element on which the signal is emitted
+   * @ssrc: The unique SSRC of the stream
+   *
+   * Signal emited when the stream with @ssrc has reached the
+   * index limit of paquet. User should provide a new key and
+   * new RTP and RTCP encryption ciphers and authentication,
+   * and return them wrapped in a GstCaps.
+   * If user could not provide those parameters or signal is not
+   * answered, the buffers of this stream will be dropped.
+   */
+  gst_srtp_recv_signals[SIGNAL_INDEX_LIMIT] =
+      g_signal_new ("index-limit", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstSrtpRecvClass,
+          index_limit), NULL, NULL, gst_srtp_marshal_BOXED__UINT,
       GST_TYPE_CAPS, 1, G_TYPE_UINT);
 }
 
@@ -301,6 +376,9 @@ gst_srtp_recv_init (GstSrtpRecv * filter, GstSrtpRecvClass * gclass)
   gst_pad_set_iterate_internal_links_function (filter->rtp_srcpad,
       GST_DEBUG_FUNCPTR (gst_srtp_recv_iterate_internal_links_rtp));
 
+  gst_pad_set_element_private (filter->rtp_sinkpad, filter->rtp_srcpad);
+  gst_pad_set_element_private (filter->rtp_srcpad, filter->rtp_sinkpad);
+
   gst_element_add_pad (GST_ELEMENT (filter), filter->rtp_sinkpad);
   gst_element_add_pad (GST_ELEMENT (filter), filter->rtp_srcpad);
 
@@ -323,11 +401,15 @@ gst_srtp_recv_init (GstSrtpRecv * filter, GstSrtpRecvClass * gclass)
   gst_pad_set_iterate_internal_links_function (filter->rtcp_srcpad,
       GST_DEBUG_FUNCPTR (gst_srtp_recv_iterate_internal_links_rtcp));
 
+  gst_pad_set_element_private (filter->rtcp_sinkpad, filter->rtcp_srcpad);
+  gst_pad_set_element_private (filter->rtcp_srcpad, filter->rtcp_sinkpad);
+
   gst_element_add_pad (GST_ELEMENT (filter), filter->rtcp_sinkpad);
   gst_element_add_pad (GST_ELEMENT (filter), filter->rtcp_srcpad);
 
   filter->use_caps = FALSE;
   filter->ask_update = FALSE;
+  filter->first_session = TRUE;
   srtp_filter = filter;
 }
 
@@ -337,27 +419,17 @@ static GstSrtpRecvSsrcStream *
 find_filter_stream_for_ssrc (GstSrtpRecv * filter, guint32 ssrc,
     gboolean ask_update)
 {
-  GSList *walk;
   GstSrtpRecvSsrcStream *stream = NULL;
 
-  for (walk = filter->streams; walk; walk = g_slist_next (walk)) {
-    stream = (GstSrtpRecvSsrcStream *) walk->data;
+  stream = g_hash_table_lookup (filter->streams, &ssrc);
 
-    if (stream->ssrc == ssrc) {
-      /* If asked, remove stream and leave to create a new one */
-      if (ask_update) {
-        srtp_remove_stream (filter->session, ssrc);
-        g_free (stream->key);
-        stream->key = NULL;
-        filter->streams = g_slist_delete_link (filter->streams, walk);
-      } else {
-        GST_DEBUG_OBJECT (filter, "Pad found for SSRC %d", ssrc);
-      }
-      return stream;
-    }
+  if (stream && ask_update) {
+    srtp_remove_stream (filter->session, ssrc);
+    g_hash_table_remove (filter->streams, &ssrc);
+    stream = NULL;
   }
 
-  return NULL;
+  return stream;
 }
 
 /* Set the limit_reached flag on the stream structure with SSRC
@@ -369,6 +441,7 @@ set_stream_key_limit (GstSrtpRecv * filter, guint32 ssrc,
   gboolean ret = TRUE;
   GstSrtpRecvSsrcStream *stream =
       find_filter_stream_for_ssrc (filter, ssrc, FALSE);
+
   if (stream)
     stream->limit_reached = limit_reached;
   else
@@ -390,7 +463,7 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
   /* Create new stream structure and set default values */
   stream = g_slice_new0 (GstSrtpRecvSsrcStream);
   stream->ssrc = ssrc;
-  stream->key = g_new0 (gchar, 30);
+  stream->key = g_new0 (gchar, SRTP_MAX_KEY_LEN);
   stream->rtp_cipher = AES_128_ICM;
   stream->rtp_auth = HMAC_SHA1;
   stream->rtcp_cipher = AES_128_ICM;
@@ -398,38 +471,46 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
   stream->limit_reached = FALSE;
 
   /* Get info from caps */
-  if ((ps = gst_caps_get_structure (caps, 0)) &&
-      (key = gst_structure_get_string (ps, "mkey"))) {
+  if (!(ps = gst_caps_get_structure (caps, 0)))
+    goto error;
 
-    if ((len = strlen (key)) > 30)
-      len = 30;
+  if (!(key = gst_structure_get_string (ps, "mkey")))
+    goto error;
 
-    memcpy ((void *) stream->key, (void *) key, len);
-    gst_structure_get_uint (ps, "rtp_c", &(stream->rtp_cipher));
-    gst_structure_get_uint (ps, "rtp_a", &(stream->rtp_auth));
-    gst_structure_get_uint (ps, "rtcp_c", &(stream->rtcp_cipher));
-    gst_structure_get_uint (ps, "rtcp_a", &(stream->rtcp_auth));
+  if ((len = strlen (key)) <= 0)
+    goto error;
+
+  if (len > SRTP_MAX_KEY_LEN)
+    len = SRTP_MAX_KEY_LEN;
+
+  memcpy ((void *) stream->key, (void *) key, len);
+  gst_structure_get_uint (ps, "rtp-cipher", &(stream->rtp_cipher));
+  gst_structure_get_uint (ps, "rtp-auth", &(stream->rtp_auth));
+  gst_structure_get_uint (ps, "rtcp-cipher", &(stream->rtcp_cipher));
+  gst_structure_get_uint (ps, "rtcp-auth", &(stream->rtcp_auth));
+
+  if (stream->rtcp_cipher != NULL_CIPHER && stream->rtcp_auth == NULL_AUTH) {
+    GST_WARNING
+        ("Cannot have SRTP NULL authentication with a not-NULL encryption cipher.");
+    goto error;
   }
-
-  if (len == 0) {
-    g_free (stream->key);
-    g_free (stream);
-    stream = NULL;
-  }
-
-  gst_caps_unref (caps);
 
   return stream;
+
+error:
+  g_free (stream->key);
+  g_slice_free (GstSrtpRecvSsrcStream, stream);
+  return NULL;
 }
 
 /* Sets the policy (cipher, authentication)
 */
 static void
-set_crypto_policy_cipher_auth (GstSrtpRecvSsrcStream * stream,
+set_crypto_policy_cipher_auth (guint cipher, guint auth,
     crypto_policy_t * policy)
 {
-  if (stream->rtp_cipher == AES_128_ICM) {
-    if (stream->rtp_auth == HMAC_SHA1) {
+  if (cipher == AES_128_ICM) {
+    if (auth == HMAC_SHA1) {
       crypto_policy_set_aes_cm_128_hmac_sha1_80 (policy);
       GST_LOG ("Policy set to AES_128_ICM and HMAC_SHA1");
     } else {
@@ -437,7 +518,7 @@ set_crypto_policy_cipher_auth (GstSrtpRecvSsrcStream * stream,
       GST_LOG ("Policy set to AES_128_ICM and NULL authentication");
     }
   } else {
-    if (stream->rtp_auth == HMAC_SHA1) {
+    if (auth == HMAC_SHA1) {
       crypto_policy_set_null_cipher_hmac_sha1_80 (policy);
       GST_LOG ("Policy set to NULL cipher and HMAC_SHA1");
     } else {
@@ -458,61 +539,52 @@ static GstCaps *
 signal_get_srtp_params (GstSrtpRecv * filter, guint32 ssrc, guint signal)
 {
   GstCaps *caps = NULL;
-  GValue caps_ret = { 0 };
-  GValue args[2] = { {0}, {0} };
 
-  g_value_init (&args[0], GST_TYPE_ELEMENT);
-  g_value_set_object (&args[0], filter);
-  g_value_init (&args[1], G_TYPE_UINT);
-  g_value_set_uint (&args[1], ssrc);
+  g_signal_emit (filter, gst_srtp_recv_signals[signal], 0, ssrc, &caps);
 
-  g_value_init (&caps_ret, GST_TYPE_CAPS);
-  g_value_set_boxed (&caps_ret, NULL);
-
-  g_signal_emitv (args, gst_srtp_recv_signals[signal], 0, &caps_ret);
-
-  g_value_unset (&args[0]);
-  g_value_unset (&args[1]);
-  caps = (GstCaps *) g_value_dup_boxed (&caps_ret);
-  g_value_unset (&caps_ret);
+  if (caps != NULL)
+    GST_DEBUG_OBJECT (filter, "Caps received");
 
   return caps;
 }
 
 /* Get SSRC from buffer
  */
-static guint32
-get_ssrc_from_buffer (GstBuffer * buf, gboolean is_rtcp)
+static gboolean
+get_ssrc_from_buffer (GstBuffer * buf, guint32 * ssrc, gboolean is_rtcp)
 {
-  gboolean ret;
-  GstRTCPPacket *packet = NULL;
-  guint32 ssrc = 0;
+  gboolean ret = FALSE;
+  GstRTCPPacket packet;
   /* RTCP only */
   guint64 ntptime;
   guint32 rtptime;
   guint32 packet_count;
   guint32 octet_count;
 
-  if (is_rtcp) {                /* Get SSRC from RR or SR packet (RTCP) */
-    for (ret = gst_rtcp_buffer_get_first_packet (buf, packet);
-        ret && ssrc == 0; ret = gst_rtcp_packet_move_to_next (packet)) {
-      switch (gst_rtcp_packet_get_type (packet)) {
-        case GST_RTCP_TYPE_RR:
-          ssrc = gst_rtcp_packet_rr_get_ssrc (packet);
-          break;
-        case GST_RTCP_TYPE_SR:
-          gst_rtcp_packet_sr_get_sender_info (packet, &ssrc, &ntptime, &rtptime,
-              &packet_count, &octet_count);
-          break;
-        default:
-          break;
-      }
+  if (is_rtcp) {                /* Get SSRC from SDES packet (RTCP) */
+    if (gst_rtcp_buffer_get_first_packet (buf, &packet)) {
+      do {
+        switch (gst_rtcp_packet_get_type (&packet)) {
+          case GST_RTCP_TYPE_RR:
+            *ssrc = gst_rtcp_packet_rr_get_ssrc (&packet);
+            ret = TRUE;
+            break;
+          case GST_RTCP_TYPE_SR:
+            gst_rtcp_packet_sr_get_sender_info (&packet, ssrc, &ntptime,
+                &rtptime, &packet_count, &octet_count);
+            ret = TRUE;
+            break;
+          default:
+            break;
+        }
+      } while (gst_rtcp_packet_move_to_next (&packet) && ret == FALSE);
     }
   } else {                      /* Get SSRC from buffer (RTP) */
-    ssrc = gst_rtp_buffer_get_ssrc (buf);
+    *ssrc = gst_rtp_buffer_get_ssrc (buf);
+    ret = TRUE;
   }
 
-  return ssrc;
+  return ret;
 }
 
 /* Create a stream in the session
@@ -528,9 +600,11 @@ init_session_stream (GstSrtpRecv * filter, guint32 ssrc,
     return err_status_bad_param;
 
   GST_LOG_OBJECT (filter, "Setting RTP policy...");
-  set_crypto_policy_cipher_auth (stream, &policy.rtp);
+  set_crypto_policy_cipher_auth (stream->rtp_cipher, stream->rtp_auth,
+      &policy.rtp);
   GST_LOG_OBJECT (filter, "Setting RTCP policy...");
-  set_crypto_policy_cipher_auth (stream, &policy.rtcp);
+  set_crypto_policy_cipher_auth (stream->rtcp_cipher, stream->rtcp_auth,
+      &policy.rtcp);
 
   policy.ssrc.value = ssrc;
   policy.ssrc.type = ssrc_specific;
@@ -547,7 +621,7 @@ init_session_stream (GstSrtpRecv * filter, guint32 ssrc,
 
   if (ret == err_status_ok) {
     filter->first_session = FALSE;
-    filter->streams = g_slist_prepend (filter->streams, stream);
+    g_hash_table_insert (filter->streams, &stream->ssrc, stream);
   }
 
   return ret;
@@ -556,59 +630,62 @@ init_session_stream (GstSrtpRecv * filter, guint32 ssrc,
 /* Return a stream structure for a given buffer
  */
 static GstSrtpRecvSsrcStream *
-validate_buffer (GstSrtpRecv * filter, GstBuffer * buf, gboolean is_rtcp)
+validate_buffer (GstSrtpRecv * filter, GstBuffer * buf, guint32 * ssrc,
+    gboolean is_rtcp)
 {
-  guint32 ssrc;
   GstCaps *caps;
   err_status_t err;
   GstSrtpRecvSsrcStream *stream = NULL;
 
   /* Try to find SSRC in local table */
-  ssrc = get_ssrc_from_buffer (buf, is_rtcp);
+  if (get_ssrc_from_buffer (buf, ssrc, is_rtcp) == TRUE) {
 
-  if (ssrc == 0) {
-    GST_WARNING_OBJECT (filter, "No SSRC found in buffer");
-  } else {
-    stream = find_filter_stream_for_ssrc (filter, ssrc, filter->ask_update);
+    stream = find_filter_stream_for_ssrc (filter, *ssrc, filter->ask_update);
     filter->ask_update = FALSE;
 
-    if (!stream) {
+    if (stream == NULL) {
       /* Policy not found or caps has changed */
 
       if (!filter->use_caps) {
         /* Emit signal to get srtp-specific params from user */
         GST_LOG_OBJECT (filter, "Using signal for srtp-specific parameters");
-        caps = signal_get_srtp_params (filter, ssrc, SIGNAL_GET_CAPS);
+        if (!(caps = signal_get_srtp_params (filter, *ssrc, SIGNAL_GET_CAPS)))
+          goto streamerror;
       } else {
         /* For testing purpose, get srtp-specific params from caps */
         GST_LOG_OBJECT (filter, "Using caps for srtp-specific parameters");
-        caps = gst_buffer_get_caps (buf);
+        if (!(caps = gst_buffer_get_caps (buf)))
+          goto streamerror;
       }
 
-      if (caps)
-        stream = get_stream_from_caps (caps, ssrc);
+      stream = get_stream_from_caps (caps, *ssrc);
+      gst_caps_unref (caps);
 
-      if (!stream) {
-        /* Signal returned empty or invalid caps : drop buffer */
-        GST_WARNING_OBJECT (filter,
-            "Could not set stream with SSRC %d (no caps or wrong caps)", ssrc);
-      } else {                  /* caps are OK */
-        err = init_session_stream (filter, ssrc, stream);
+      if (stream) {
+        err = init_session_stream (filter, *ssrc, stream);
 
         if (err != err_status_ok) {
           g_free (stream->key);
-          g_free (stream);
+          g_slice_free (GstSrtpRecvSsrcStream, stream);
           stream = NULL;
           GST_WARNING_OBJECT (filter,
-              "Could not set stream with SSRC %d (error code %d)", ssrc, err);
+              "Could not set stream with SSRC %d (error code %d)", *ssrc, err);
         } else {
-          GST_LOG_OBJECT (filter, "Stream set with SSRC %d and key [%30s]",
-              ssrc, stream->key);
+          GST_LOG_OBJECT (filter, "Stream set with SSRC %d and key [%s]",
+              *ssrc, stream->key);
         }
+
+      } else {
+        /* Signal returned empty or invalid caps : drop buffer */
+        GST_WARNING_OBJECT (filter,
+            "Could not set stream with SSRC %d (no caps or wrong caps)", *ssrc);
       }
     }
+  } else {
+    GST_WARNING_OBJECT (filter, "No SSRC found in buffer");
   }
 
+streamerror:
   return stream;
 }
 
@@ -625,15 +702,17 @@ new_session_stream_from_caps (GstSrtpRecv * filter, guint32 ssrc,
   if (!GST_IS_SRTPRECV (filter) || !caps)
     return FALSE;
 
-  find_filter_stream_for_ssrc (filter, ssrc, TRUE);     /* Remove existing stream, if any */
+  /* Remove existing stream, if any */
+  find_filter_stream_for_ssrc (filter, ssrc, TRUE);
   stream = get_stream_from_caps (caps, ssrc);
 
   if (stream) {
-    err = init_session_stream (filter, ssrc, stream);   /* Create new session stream */
+    /* Create new session stream */
+    err = init_session_stream (filter, ssrc, stream);
 
     if (err != err_status_ok) {
       g_free (stream->key);
-      g_free (stream);
+      g_slice_free (GstSrtpRecvSsrcStream, stream);
       stream = NULL;
     } else {
       ret = TRUE;
@@ -643,36 +722,60 @@ new_session_stream_from_caps (GstSrtpRecv * filter, guint32 ssrc,
   return ret;
 }
 
+static void
+clear_stream (GstSrtpRecvSsrcStream * stream)
+{
+  g_free (stream->key);
+  g_slice_free (GstSrtpRecvSsrcStream, stream);
+}
+
 /* Clear the policy list
  */
 static void
 gst_srtp_recv_clear_streams (GstSrtpRecv * filter)
 {
-  GSList *walk;
-  GstSrtpRecvSsrcStream *stream;
   guint nb = 0;
 
   GST_OBJECT_LOCK (filter);
 
   if (!filter->first_session)
     srtp_dealloc (filter->session);
-  filter->first_session = TRUE;
 
-  walk = filter->streams;
-  while (walk) {
-    stream = (GstSrtpRecvSsrcStream *) walk->data;
-
-    if (stream) {
-      g_free (stream->key);
-      g_slice_free (GstSrtpRecvSsrcStream, stream);
-      walk = filter->streams = g_slist_delete_link (filter->streams, walk);
-      nb++;
-    }
-  }
+  nb = g_hash_table_size (filter->streams);
+  g_hash_table_destroy (filter->streams);
 
   filter->streams = NULL;
+  filter->first_session = TRUE;
+
   GST_OBJECT_UNLOCK (filter);
+
   GST_DEBUG_OBJECT (filter, "Cleared %d streams", nb);
+}
+
+/* Send a signal
+ */
+static gboolean
+send_signal (GstSrtpRecv * filter, guint32 ssrc, gint signal)
+{
+  GstCaps *caps;
+  gboolean ret = FALSE;
+
+  caps = signal_get_srtp_params (filter, ssrc, signal);
+
+  if (caps) {
+    if (new_session_stream_from_caps (filter, ssrc, caps)) {
+      GST_LOG_OBJECT (filter, "New stream set with SSRC %d", ssrc);
+      ret = TRUE;
+    } else {
+      GST_WARNING_OBJECT (filter, "Could not set stream with SSRC %d", ssrc);
+    }
+    gst_caps_unref (caps);
+
+  } else {
+    GST_LOG_OBJECT (filter, "No answer to signal %d", signal);
+  }
+
+  return ret;
 }
 
 /* Set property
@@ -743,44 +846,39 @@ gst_srtp_recv_sink_setcaps (GstPad * pad, GstCaps * caps, gboolean is_rtcp)
 {
   GstSrtpRecv *filter;
   GstPad *otherpad;
-  GstCaps *othercaps;
+  GstCaps *othercaps = NULL;
   GstStructure *ps;
   gboolean ret = FALSE;
 
   filter = GST_SRTPRECV (gst_pad_get_parent (pad));
 
-  if ((othercaps = gst_caps_copy (caps))) {
-    /* Remove srtp params before setting caps on src */
-    ps = gst_caps_get_structure (othercaps, 0);
-    GST_DEBUG_OBJECT (pad, "Caps: %" GST_PTR_FORMAT, othercaps);
+  othercaps = gst_caps_make_writable (caps);
 
-    gst_structure_remove_field (ps, "mkey");
-    gst_structure_remove_field (ps, "rtp_c");
-    gst_structure_remove_field (ps, "rtp_a");
-    gst_structure_remove_field (ps, "rtcp_c");
-    gst_structure_remove_field (ps, "rtcp_a");
+  /* Remove srtp params before setting caps on src */
+  ps = gst_caps_get_structure (othercaps, 0);
+  GST_DEBUG_OBJECT (pad, "Caps: %" GST_PTR_FORMAT, othercaps);
 
-    if (is_rtcp)
-      gst_structure_set_name (ps, "application/x-rtcp");
-    else
-      gst_structure_set_name (ps, "application/x-rtp");
+  gst_structure_remove_field (ps, "mkey");
+  gst_structure_remove_field (ps, "rtp-cipher");
+  gst_structure_remove_field (ps, "rtp-auth");
+  gst_structure_remove_field (ps, "rtcp-cipher");
+  gst_structure_remove_field (ps, "rtcp-auth");
 
-    GST_OBJECT_LOCK (filter);
+  if (is_rtcp)
+    gst_structure_set_name (ps, "application/x-rtcp");
+  else
+    gst_structure_set_name (ps, "application/x-rtp");
 
-    if (is_rtcp)
-      otherpad = filter->rtcp_srcpad;
-    else
-      otherpad = filter->rtp_srcpad;
+  GST_OBJECT_LOCK (filter);
 
-    GST_OBJECT_UNLOCK (filter);
+  if (is_rtcp)
+    otherpad = filter->rtcp_srcpad;
+  else
+    otherpad = filter->rtp_srcpad;
 
-    if (gst_pad_set_caps (otherpad, othercaps))
-      ret = TRUE;
+  GST_OBJECT_UNLOCK (filter);
 
-    gst_caps_unref (othercaps);
-  }
-
-  if (!ret) {
+  if (!(ret = gst_pad_set_caps (otherpad, othercaps))) {
     GST_ERROR_OBJECT (pad, "Could not set caps on source pad");
     GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), CORE, CAPS, (NULL),
         ("Could not set caps on source pad"));
@@ -813,30 +911,7 @@ gst_srtp_recv_sink_getcaps_rtcp (GstPad * pad)
 static GstCaps *
 gst_srtp_recv_sink_getcaps (GstPad * pad, gboolean is_rtcp)
 {
-  GstCaps *othercaps = NULL;
-  GstSrtpRecv *filter = NULL;
-
-  filter = GST_SRTPRECV (gst_pad_get_parent (pad));
-  GST_OBJECT_LOCK (filter);
-
-  if (pad == filter->rtp_sinkpad)
-    othercaps = gst_caps_new_simple ("application/x-srtp", NULL);
-  else if (pad == filter->rtp_srcpad)
-    othercaps = gst_caps_new_simple ("application/x-rtp", NULL);
-  else if (pad == filter->rtcp_sinkpad)
-    othercaps = gst_caps_new_simple ("application/x-srtcp", NULL);
-  else if (pad == filter->rtcp_srcpad)
-    othercaps = gst_caps_new_simple ("application/x-rtcp", NULL);
-  else {
-    GST_ERROR_OBJECT (pad, "Could not find suitable caps");
-    GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), CORE, CAPS, (NULL),
-        ("Could not find suitable caps"));
-  }
-
-  GST_OBJECT_UNLOCK (filter);
-  gst_object_unref (filter);
-
-  return othercaps;
+  return gst_caps_copy (gst_pad_get_pad_template_caps (pad));
 }
 
 /* RTP pad internal_links function
@@ -866,21 +941,8 @@ gst_srtp_recv_iterate_internal_links (GstPad * pad, gboolean is_rtcp)
   GstIterator *it = NULL;
 
   filter = GST_SRTPRECV (gst_pad_get_parent (pad));
-  GST_OBJECT_LOCK (filter);
 
-  if (is_rtcp) {
-    if (pad == filter->rtcp_sinkpad)
-      otherpad = filter->rtcp_srcpad;
-    else if (pad == filter->rtcp_srcpad)
-      otherpad = filter->rtcp_sinkpad;
-  } else {
-    if (pad == filter->rtp_sinkpad)
-      otherpad = filter->rtp_srcpad;
-    else if (pad == filter->rtp_srcpad)
-      otherpad = filter->rtp_sinkpad;
-  }
-
-  GST_OBJECT_UNLOCK (filter);
+  otherpad = (GstPad *) gst_pad_get_element_private (pad);
 
   if (otherpad)
     it = gst_iterator_new_single (GST_TYPE_PAD, otherpad,
@@ -917,111 +979,119 @@ static GstFlowReturn
 gst_srtp_recv_chain (GstPad * pad, GstBuffer * buf, gboolean is_rtcp)
 {
   GstSrtpRecv *filter;
-  GstCaps *caps;
   GstPad *otherpad;
-  err_status_t err;
+  err_status_t err = err_status_ok;
   GstSrtpRecvSsrcStream *stream = NULL;
-  GstFlowReturn ret = GST_FLOW_CUSTOM_ERROR;
+  GstFlowReturn ret;
+  gboolean drop_buffer = TRUE;
   gint signal = -1;
+  gint size, size_p;
+  guint32 ssrc = 0;
 
   filter = GST_SRTPRECV (gst_pad_get_parent (pad));
 
-  GST_LOG_OBJECT (pad, "Received buffer of size %d", GST_BUFFER_SIZE (buf));
   GST_OBJECT_LOCK (filter);
 
   /* Check if this stream exists, if not create a new stream */
-  stream = validate_buffer (filter, buf, is_rtcp);
-
-  if (stream) {
-    if (!stream->limit_reached) {       /* Drop buffer if flag is set */
-      guint size = GST_BUFFER_SIZE (buf);
-      gint size_p = size;
-
-      /* Change buffer to remove protection */
-      buf = gst_buffer_make_writable (buf);
-
-      if (is_rtcp) {
-        otherpad = filter->rtcp_srcpad;
-        err =
-            srtp_unprotect_rtcp (filter->session, GST_BUFFER_DATA (buf),
-            &size_p);
-      } else {
-        otherpad = filter->rtp_srcpad;
-        err = srtp_unprotect (filter->session, GST_BUFFER_DATA (buf), &size_p);
-      }
-
-      GST_OBJECT_UNLOCK (filter);
-
-      if (err == err_status_ok) {
-        GST_LOG_OBJECT (pad, "Buffer unprotected with size %d", size_p);
-        GST_BUFFER_SIZE (buf) = size_p;
-
-        /* Remove srtp-specific caps from buffer */
-        gst_buffer_set_caps (buf, GST_PAD_CAPS (otherpad));
-
-        /* Push buffer to source pad */
-        ret = gst_pad_push (otherpad, buf);
-
-        if (ret != GST_FLOW_OK) {
-          GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), CORE, PAD, (NULL),
-              ("Unable to push buffer on source pad"));
-        }
-
-      } else {                  /* srtp_unprotect failed */
-        GST_WARNING_OBJECT (pad,
-            "Unable to unprotect buffer (unprotect failed) code %d", err);
-
-        /* Signal user depending on type of error */
-        switch (err) {
-          case err_status_key_expired:
-            /* Signal already sent in event_reporter */
-            /*signal = SIGNAL_HARD_LIMIT; */
-            break;
-          case err_status_auth_fail:
-          case err_status_cipher_fail:
-            signal = SIGNAL_GET_CAPS;
-            break;
-          default:
-            signal = -1;
-        }
-      }
-    } else {                    /* Hard limit reached */
-      /* Ask the user for caps at a regular interval */
-      signal = SIGNAL_HARD_LIMIT;
-      GST_OBJECT_UNLOCK (filter);
-    }
-  } else {                      /* Could not find or create stream */
+  if (!(stream = validate_buffer (filter, buf, &ssrc, is_rtcp))) {
     GST_OBJECT_UNLOCK (filter);
+    goto dropbuffer;
+  }
+
+  /* Drop buffer if flag is set */
+  if (stream->limit_reached) {
+    GST_OBJECT_UNLOCK (filter);
+    signal = SIGNAL_HARD_LIMIT;
+    goto dropbuffer;
+  }
+
+  GST_LOG_OBJECT (pad, "Received %s buffer of size %d with SSRC = %d",
+      is_rtcp ? "RTCP" : "RTP", GST_BUFFER_SIZE (buf), ssrc);
+
+  /* Change buffer to remove protection */
+  buf = gst_buffer_make_writable (buf);
+  size = GST_BUFFER_SIZE (buf);
+  size_p = size;
+
+unprotect:
+  if (is_rtcp)
+    err = srtp_unprotect_rtcp (filter->session, GST_BUFFER_DATA (buf), &size_p);
+  else
+    err = srtp_unprotect (filter->session, GST_BUFFER_DATA (buf), &size_p);
+
+  GST_OBJECT_UNLOCK (filter);
+
+  if (err == err_status_ok) {
+    GST_BUFFER_SIZE (buf) = size_p;
+    otherpad = (GstPad *) gst_pad_get_element_private (pad);
+
+    /* Remove srtp-specific caps from buffer */
+    gst_buffer_set_caps (buf, GST_PAD_CAPS (otherpad));
+
+    /* Push buffer to source pad */
+    ret = gst_pad_push (otherpad, buf);
+
+    if (ret == GST_FLOW_OK) {
+      drop_buffer = FALSE;
+    } else {
+      GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), CORE, PAD, (NULL),
+          ("Unable to push buffer on source pad"));
+    }
+
+  } else {                      /* srtp_unprotect failed */
+    GST_WARNING_OBJECT (pad,
+        "Unable to unprotect buffer (unprotect failed code %d)", err);
+
+    /* Signal user depending on type of error */
+    switch (err) {
+      case err_status_key_expired:
+        GST_OBJECT_LOCK (filter);
+
+        /* Update stream */
+        if ((stream = find_filter_stream_for_ssrc (filter, ssrc, FALSE))) {
+          /* If limit flag has been lifted, try unprotecting buffer again */
+          if (stream->limit_reached) {
+            signal = SIGNAL_HARD_LIMIT;
+          } else {
+            GST_DEBUG_OBJECT (pad, "Trying to unprotect again");
+            size_p = size;
+            goto unprotect;
+          }
+        } else {
+          /* Couldn't find stream : ask for new caps */
+          signal = SIGNAL_NEW_CAPS;
+        }
+
+        GST_OBJECT_UNLOCK (filter);
+        break;
+      case err_status_auth_fail:
+      case err_status_cipher_fail:
+        signal = SIGNAL_NEW_CAPS;
+        break;
+      default:
+        signal = -1;
+    }
   }
 
   /* Drop buffer, except if gst_pad_push returned OK or an error */
-  if (ret == GST_FLOW_CUSTOM_ERROR) {
-    GST_WARNING_OBJECT (pad, "Dropping buffer");
+dropbuffer:
+  if (drop_buffer == TRUE) {
+    if (signal == -1)
+      GST_WARNING_OBJECT (pad, "Dropping buffer");
+
     gst_buffer_unref (buf);
     ret = GST_FLOW_OK;
 
     if (signal != -1) {
-      GST_DEBUG_OBJECT (pad, "Sending signal %d to user", signal);
+      GST_WARNING_OBJECT (pad, "Dropping buffer and sending signal %d to user",
+          signal);
       GST_OBJECT_LOCK (filter);
 
-      caps = signal_get_srtp_params (filter, stream->ssrc, signal);
-
-      if (caps) {
-        if (new_session_stream_from_caps (filter, stream->ssrc, caps))
-          GST_LOG_OBJECT (filter, "New stream set with SSRC %d", stream->ssrc);
-        else
-          GST_WARNING_OBJECT (filter, "Could not set stream with SSRC %d",
-              stream->ssrc);
-
-        set_stream_key_limit (filter, stream->ssrc, FALSE);
-      } else {
-        GST_DEBUG_OBJECT (pad, "No answer to signal %d", signal);
-      }
+      if (send_signal (filter, ssrc, signal))
+        set_stream_key_limit (filter, ssrc, FALSE);
 
       GST_OBJECT_UNLOCK (filter);
     }
-  } else if (ret == GST_FLOW_OK) {
-    signal = -1;
   }
 
   gst_object_unref (filter);
@@ -1036,7 +1106,6 @@ void
 srtp_recv_event_reporter (srtp_event_data_t * data)
 {
   GstSrtpRecv *filter = srtp_filter;
-  GstCaps *caps;
   guint32 ssrc = ntohl (data->stream->ssrc);
 
   if (!GST_IS_SRTPRECV (filter)) {
@@ -1052,18 +1121,9 @@ srtp_recv_event_reporter (srtp_event_data_t * data)
       GST_WARNING_OBJECT (filter, "Key usage soft limit reached on stream %d",
           ssrc);
 
-      if (filter) {
-        caps = signal_get_srtp_params (filter, ssrc, SIGNAL_SOFT_LIMIT);
+      if (filter)
+        send_signal (filter, ssrc, SIGNAL_SOFT_LIMIT);
 
-        if (caps) {
-          if (new_session_stream_from_caps (filter, ssrc, caps)) {
-            GST_LOG_OBJECT (filter, "Stream set with SSRC %d", ssrc);
-          } else {
-            GST_WARNING_OBJECT (filter, "Could not set stream with SSRC %d",
-                ssrc);
-          }
-        }                       /* No answer from user : no problem for now, just wait */
-      }
       break;
     case event_key_hard_limit:
       GST_WARNING_OBJECT (filter, "Key usage hard limit reached on stream %d",
@@ -1071,26 +1131,21 @@ srtp_recv_event_reporter (srtp_event_data_t * data)
 
       if (filter) {
         set_stream_key_limit (filter, ssrc, TRUE);
-        caps = signal_get_srtp_params (filter, ssrc, SIGNAL_HARD_LIMIT);
 
-        if (caps) {
-          if (new_session_stream_from_caps (filter, ssrc, caps))
-            GST_LOG_OBJECT (filter, "Stream set with SSRC %d", ssrc);
-          else
-            GST_WARNING_OBJECT (filter, "Could not set stream with SSRC %d",
-                ssrc);
-        } else {
-          /* No answer from user : limit_reached flag is activated for this stream 
-           * This will drop every buffer on that stream from now on
-           */
-          GST_WARNING_OBJECT (filter,
-              "No answer from user, dropping buffers on stream %d", ssrc);
-        }
+        if (send_signal (filter, ssrc, SIGNAL_HARD_LIMIT))
+          set_stream_key_limit (filter, ssrc, FALSE);
       }
       break;
     case event_packet_index_limit:
       GST_WARNING_OBJECT (filter, "Packet index limit reached on stream %d",
           data->stream->ssrc);
+
+      if (filter) {
+        set_stream_key_limit (filter, ssrc, TRUE);
+
+        if (send_signal (filter, ssrc, SIGNAL_INDEX_LIMIT))
+          set_stream_key_limit (filter, ssrc, FALSE);
+      }
       break;
     default:
       GST_WARNING_OBJECT (filter,
@@ -1111,16 +1166,17 @@ gst_srtp_recv_change_state (GstElement * element, GstStateChange transition)
 
   switch (transition) {
     case GST_STATE_CHANGE_NULL_TO_READY:
+      if (!filter->first_session)
+        gst_srtp_recv_clear_streams (filter);
+
       srtp_init ();
       srtp_install_event_handler (srtp_recv_event_reporter);
-      filter->first_session = TRUE;
       break;
     case GST_STATE_CHANGE_READY_TO_PAUSED:
+      filter->streams = g_hash_table_new_full (g_int_hash, g_int_equal, NULL,
+          (GDestroyNotify) clear_stream);
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
-      break;
-    case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
-    case GST_STATE_CHANGE_PAUSED_TO_READY:
       break;
     default:
       break;
@@ -1131,14 +1187,12 @@ gst_srtp_recv_change_state (GstElement * element, GstStateChange transition)
   res = parent_class->change_state (element, transition);
 
   switch (transition) {
-    case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
-      break;
     case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
       break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
+      gst_srtp_recv_clear_streams (filter);
       break;
     case GST_STATE_CHANGE_READY_TO_NULL:
-      gst_srtp_recv_clear_streams (filter);
       break;
     default:
       break;
@@ -1159,12 +1213,3 @@ gst_srtp_recv_plugin_init (GstPlugin * srtprecv)
   return gst_element_register (srtprecv, "srtprecv", GST_RANK_NONE,
       GST_TYPE_SRTPRECV);
 }
-
-/* PACKAGE: this is usually set by autotools depending on some _INIT macro
- * in configure.ac and then written into and defined in config.h, but we can
- * just set it ourselves here in case someone doesn't use autotools to
- * compile this code. GST_PLUGIN_DEFINE needs PACKAGE to be defined.
- */
-#ifndef PACKAGE
-#define PACKAGE "srtprecv"
-#endif

@@ -47,8 +47,8 @@
 #define __GST_SRTPSEND_H__
 
 #include <gst/gst.h>
-#include <srtp/srtp.h>
-#include <srtp/srtp_priv.h>
+#include "srtp/srtp.h"
+#include "srtp/srtp_priv.h"
 
 G_BEGIN_DECLS
 
@@ -73,6 +73,12 @@ typedef enum {
   ssrc_invalid      = 2
 } ssrc_state_t;
 
+typedef enum {
+  buffer_valid          = 0,
+  buffer_drop_continue  = 1,
+  buffer_drop_fail      = 2
+} buffer_state_t;
+
 struct _GstSrtpSend
 {
   GstElement element;
@@ -90,11 +96,6 @@ struct _GstSrtpSend
   gboolean ask_setcaps;
   gboolean use_rand_key;
   gboolean limit_reached;
-
-  GSList *rtp_pads;
-  guint rtppads_num;
-  GSList *rtcp_pads;
-  guint rtcppads_num;
 };
 
 struct _GstSrtpSendClass 
@@ -103,8 +104,8 @@ struct _GstSrtpSendClass
   /*srtp_event_handler_func_t *srtp_event_handler;*/
 
   void (*soft_limit) (GstSrtpSend * filter, guint ssrc);
-  void (*hard_limit) (GstSrtpSend * filter, guint ssrc);
-  void (*index_limit) (GstSrtpSend * filter, guint ssrc);
+  guint (*hard_limit) (GstSrtpSend * filter, guint ssrc);
+  guint (*index_limit) (GstSrtpSend * filter, guint ssrc);
 };
 
 GType gst_srtp_send_get_type (void);

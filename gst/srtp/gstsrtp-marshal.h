@@ -22,6 +22,14 @@ extern void gst_srtp_marshal_VOID__UINT (GClosure     *closure,
                                          gpointer      invocation_hint,
                                          gpointer      marshal_data);
 
+/* BOOLEAN:UINT (gstrtpbin-marshal.list:3) */
+extern void gst_srtp_marshal_UINT__UINT (GClosure     *closure,
+                                         GValue       *return_value,
+                                         guint         n_param_values,
+                                         const GValue *param_values,
+                                         gpointer      invocation_hint,
+                                         gpointer      marshal_data);
+
 G_END_DECLS
 
 #endif /* __gst_srtp_marshal_MARSHAL_H__ */

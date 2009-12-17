@@ -21,26 +21,27 @@
 #include <math.h>
 
 #include <gst/gst.h>
-#include <srtp/crypto_types.h>
 
 /*
  * A simple SRTP receiver
  *
- *  receives alaw encoded RTP audio on port 5001, RTCP is received on  port 5004.
- *  the receiver RTCP reports are sent to port 5008
+ *  Receives alaw encoded RTP audio on port 5001, RTCP is received on  port 5004.
+ *  The rtpbin demux the audio through multiple audio pipeline.
+ *  The receiver RTCP reports are sent to port 5008
  *
  *             .-------.      .------------.    .----------.     .---------.   .-------.   .--------.
  *  RTP        |udpsrc |      |  srtprecv  |    | rtpbin   |     |pcmadepay|   |alawdec|   |alsasink|
  *  port=5001  |      src->rtp_sink  rtp_src->recv_rtp recv_rtp->sink     src->sink   src->sink     |
  *             '-------'      |            |    |          |     '---------'   '-------'   '--------'
+ *                            |            |    |          | --->
+ *                            |            |    |          | --->
+ *                            |            |    |          | --->
  *                            |            |    |          |
  *                            |            |    |          |     .-------.
- *                            |            |    |          |     |udpsink|  RTCP
- *                            |            |    |    send_rtcp->sink     | port=5008
- *             .-------.      |            |    |          |     '-------' sync=false
- *  RTCP       |udpsrc |      |            |    |          |               async=false
- *  port=5004  |    src->rtcp_sink rtcp_src->recv_rtcp     |
- *             '-------'      '------------'    '----------'
+ *             .-------.      |            |    |          |     |udpsink|  RTCP
+ *  RTCP       |udpsrc |      |            |    |    send_rtcp->sink     | port=5008
+ *  port=5004  |    src->rtcp_sink rtcp_src->recv_rtcp     |     '-------' sync=false
+ *             '-------'      '------------'    '----------'               async=false
  */
 
 /* the caps of the sender RTP stream. This is usually negotiated out of band with
@@ -55,6 +56,14 @@
  * is used to send back the RTCP reports of this receiver. If the data is sent
  * from another machine, change this address. */
 #define DEST_HOST "127.0.0.1"
+
+#define AES_128_ICM       1
+#define NULL_CIPHER       0
+#define STRONGHOLD_CIPHER 1
+
+#define HMAC_SHA1         3
+#define NULL_AUTH         0
+#define STRONGHOLD_AUTH   3
 
 struct SrtpRecvCaps
 {
@@ -119,77 +128,82 @@ get_user_input (gchar * input, int len)
 }
 
 static int
-new_srtp_recv_caps (SrtpRecvCaps * caps)
+new_srtp_recv_caps (struct SrtpRecvCaps *recvcaps, gboolean key_only)
 {
   int ret;
   gchar *input;
 
-  if (caps == NULL)
+  if (recvcaps == NULL)
     return 0;
 
   input = g_new0 (gchar, 81);
-
-  caps->key = g_new0 (gchar, 30);
-  caps->rtp_cipher = AES_128_ICM;
-  caps->rtp_auth = HMAC_SHA1;
-  caps->rtcp_cipher = AES_128_ICM;
-  caps->rtcp_auth = HMAC_SHA1;
+  if (recvcaps->key == NULL)
+    recvcaps->key = g_new0 (gchar, 30);
 
   /* Ask for the master key */
-  g_print ("Please enter the master key for SSRC %d: ", caps->ssrc);
+  g_print ("Please enter the master key for SSRC %d: ", recvcaps->ssrc);
   ret = get_user_input (input, 31);
 
   if (ret < 1) {
-    g_print ("You failed to specify a master key\n\n");
+    g_print ("You failed to specify a master key\n");
     g_free (input);
-    g_free (caps->key);
     return 0;
   }
 
-  memcpy ((void *) caps->key, (void *) input, strlen (input));
+  memcpy ((void *) recvcaps->key, (void *) input, strlen (input));
 
-  /* Ask for the RTP cipher */
-  g_print ("Please enter the RTP cipher for SSRC %d: ", caps->ssrc);
-  ret = get_user_input (input, 18);
+  /* Ask for other parameters, unless asked not to */
+  if (!key_only) {
 
-  if (ret < 1) {
-    g_print
-        ("You failed to specify an RTP cipher. Using default AES_128_ICM\n\n");
-  } else {
-    caps->rtp_cipher = get_cipher_property (input);
-  }
+    /* Ask for the RTP cipher */
+    g_print ("Please enter the RTP cipher for SSRC %d: ", recvcaps->ssrc);
+    ret = get_user_input (input, 18);
 
-  /* Ask for the RTP auth */
-  g_print ("Please enter the RTP authentication for SSRC %d: ", caps->ssrc);
-  ret = get_user_input (input, 16);
+    if (ret < 1) {
+      g_print
+          ("You failed to specify an RTP cipher. Using default AES_128_ICM\n");
+      recvcaps->rtp_cipher = AES_128_ICM;
+    } else {
+      recvcaps->rtp_cipher = get_cipher_property (input);
+    }
 
-  if (ret < 1) {
-    g_print
-        ("You failed to specify an RTP authentication. Using default HMAC_SHA1\n\n");
-  } else {
-    caps->rtp_auth = get_auth_property (input);
-  }
+    /* Ask for the RTP auth */
+    g_print ("Please enter the RTP authentication for SSRC %d: ",
+        recvcaps->ssrc);
+    ret = get_user_input (input, 16);
 
-  /* Ask for the RTCP cipher */
-  g_print ("Please enter the RTCP cipher for SSRC %d: ", caps->ssrc);
-  ret = get_user_input (input, 18);
+    if (ret < 1) {
+      g_print
+          ("You failed to specify an RTP authentication. Using default HMAC_SHA1\n");
+      recvcaps->rtp_auth = HMAC_SHA1;
+    } else {
+      recvcaps->rtp_auth = get_auth_property (input);
+    }
 
-  if (ret < 1) {
-    g_print
-        ("You failed to specify an RTCP cipher. Using default AES_128_ICM\n\n");
-  } else {
-    caps->rtcp_cipher = get_cipher_property (input);
-  }
+    /* Ask for the RTCP cipher */
+    g_print ("Please enter the RTCP cipher for SSRC %d: ", recvcaps->ssrc);
+    ret = get_user_input (input, 18);
 
-  /* Ask for the RTCP auth */
-  g_print ("Please enter the RTCP authentication for SSRC %d: ", caps->ssrc);
-  ret = get_user_input (input, 16);
+    if (ret < 1) {
+      g_print
+          ("You failed to specify an RTCP cipher. Using default AES_128_ICM\n");
+      recvcaps->rtcp_cipher = AES_128_ICM;
+    } else {
+      recvcaps->rtcp_cipher = get_cipher_property (input);
+    }
 
-  if (ret < 1) {
-    g_print
-        ("You failed to specify an RTCP authentication. Using default HMAC_SHA1\n\n");
-  } else {
-    caps->rtcp_auth = get_auth_property (input);
+    /* Ask for the RTCP auth */
+    g_print ("Please enter the RTCP authentication for SSRC %d: ",
+        recvcaps->ssrc);
+    ret = get_user_input (input, 16);
+
+    if (ret < 1) {
+      g_print
+          ("You failed to specify an RTCP authentication. Using default HMAC_SHA1\n");
+      recvcaps->rtcp_auth = HMAC_SHA1;
+    } else {
+      recvcaps->rtcp_auth = get_auth_property (input);
+    }
   }
 
   g_free (input);
@@ -201,70 +215,165 @@ static void
 empty_stream_list (GSList ** streams)
 {
   GSList *walk;
-  SrtpRecvCaps *recvcaps = NULL;
+  struct SrtpRecvCaps *recvcaps = NULL;
 
   while ((walk = *streams)) {
-    recvcaps = (SrtpRecvCaps *) walk->data;
+    recvcaps = (struct SrtpRecvCaps *) walk->data;
     g_free (recvcaps->key);
     recvcaps->key = NULL;
-    g_slice_free (recvcaps);
+    g_slice_free (struct SrtpRecvCaps, recvcaps);
     recvcaps = NULL;
-    *streams = g_slist_delete (*streams, walk);
+    *streams = g_slist_delete_link (*streams, walk);
   }
 }
 
-static SrtpRecvCaps *
-get_srtp_recv_caps_by_ssrc (guint ssrc, GSList ** streams, gboolean del)
+static struct SrtpRecvCaps *
+get_srtp_recv_caps_by_ssrc (guint ssrc, GSList ** streams, gboolean key_only,
+    gboolean new_caps)
 {
   GSList *walk;
-  SrtpRecvCaps *recvcaps = NULL;
+  gboolean found = FALSE;
+  struct SrtpRecvCaps *recvcaps = NULL;
 
   for (walk = *streams; walk; walk = g_slist_next (walk)) {
-    recvcaps = (SrtpRecvCaps *) walk->data;
+    recvcaps = (struct SrtpRecvCaps *) walk->data;
 
     if (recvcaps->ssrc == ssrc) {
-      if (del) {
+      if (key_only) {
+        found = TRUE;
+        break;
+      } else if (new_caps) {
+        g_print ("Changing stream\n");
         g_free (recvcaps->key);
         recvcaps->key = NULL;
-        g_slice_free (recvcaps);
+        g_slice_free (struct SrtpRecvCaps, recvcaps);
         recvcaps = NULL;
-        *streams = g_slist_delete (*streams, walk);
+        *streams = g_slist_delete_link (*streams, walk);
+        break;
       } else {
+        g_print ("Found stream\n");
         return recvcaps;
       }
     }
   }
 
   /* SSRC not found in list, create new caps */
-  recvcaps = g_slice_new0 (SrtpRecvCaps);
-  recvcaps->ssrc = ssrc;
+  if (!found) {
+    g_print ("New stream\n");
+    recvcaps = g_slice_new0 (struct SrtpRecvCaps);
+    recvcaps->ssrc = ssrc;
+    key_only = FALSE;
 
-  if (new_srtp_recv_caps (recvcaps) == 0) {
-    g_slice_free (recvcaps);
-    recvcaps = NULL;
+    recvcaps->rtp_cipher = AES_128_ICM;
+    recvcaps->rtp_auth = HMAC_SHA1;
+    recvcaps->rtcp_cipher = AES_128_ICM;
+    recvcaps->rtcp_auth = HMAC_SHA1;
+  }
+
+  if (new_srtp_recv_caps (recvcaps, key_only) == 0) {
+    if (!found)
+      g_slice_free (struct SrtpRecvCaps, recvcaps);
+
+    return NULL;
   } else {
     /* Add to list */
-    *streams = g_slist_prepend (*streams, recvcaps);
+    if (!found)
+      *streams = g_slist_prepend (*streams, recvcaps);
   }
 
   return recvcaps;
 }
 
+static GstElement *
+new_audio_pipe (GstElement * pipeline)
+{
+  GstElement *audiodepay, *audiodec, *audiores, *audioconv, *audiosink;
+  gboolean res;
+
+  /* the depayloading and decoding */
+  audiodepay = gst_element_factory_make (AUDIO_DEPAY, NULL);
+  if (!audiodepay)
+    return NULL;
+
+  audiodec = gst_element_factory_make (AUDIO_DEC, NULL);
+  if (!audiodec) {
+    g_object_unref (audiodepay);
+    return NULL;
+  }
+
+  /* the audio playback and format conversion */
+  audioconv = gst_element_factory_make ("audioconvert", NULL);
+  if (!audioconv) {
+    g_object_unref (audiodepay);
+    g_object_unref (audiodec);
+    return NULL;
+  }
+
+  audiores = gst_element_factory_make ("audioresample", NULL);
+  if (!audiores) {
+    g_object_unref (audiodepay);
+    g_object_unref (audiodec);
+    g_object_unref (audioconv);
+    return NULL;
+  }
+
+  audiosink = gst_element_factory_make (AUDIO_SINK, NULL);
+  if (!audiosink) {
+    g_object_unref (audiodepay);
+    g_object_unref (audiodec);
+    g_object_unref (audioconv);
+    g_object_unref (audiores);
+    return NULL;
+  }
+
+
+  /* add depayloading and playback to the pipeline and link */
+  gst_bin_add_many (GST_BIN (pipeline), audiodepay, audiodec, audioconv,
+      audiores, audiosink, NULL);
+
+  res = gst_element_link_many (audiodepay, audiodec, audioconv, audiores,
+      audiosink, NULL);
+  if (res != TRUE) {
+    gst_bin_remove_many (GST_BIN (pipeline), audiodepay, audiodec, audioconv,
+        audiores, audiosink, NULL);
+
+    audiodepay = NULL;
+  } else {
+    /* Audio pipeline added, start playing */
+    gst_element_set_state (audiodepay, GST_STATE_PLAYING);
+    gst_element_set_state (audiodec, GST_STATE_PLAYING);
+    gst_element_set_state (audioconv, GST_STATE_PLAYING);
+    gst_element_set_state (audiores, GST_STATE_PLAYING);
+    gst_element_set_state (audiosink, GST_STATE_PLAYING);
+  }
+
+  return audiodepay;
+}
+
 /* will be called when rtpbin has validated a payload that we can depayload */
 static void
-pad_added_cb (GstElement * rtpbin, GstPad * new_pad, GstElement * depay)
+pad_added_cb (GstElement * rtpbin, GstPad * new_pad, GstElement * pipeline)
 {
   GstPad *sinkpad;
   GstPadLinkReturn lres;
+  GstElement *depay;
 
   g_print ("new payload on pad: %s\n", GST_PAD_NAME (new_pad));
 
-  sinkpad = gst_element_get_static_pad (depay, "sink");
-  g_assert (sinkpad);
+  depay = new_audio_pipe (pipeline);
 
-  lres = gst_pad_link (new_pad, sinkpad);
-  g_assert (lres == GST_PAD_LINK_OK);
-  gst_object_unref (sinkpad);
+  if (depay) {
+    sinkpad = gst_element_get_static_pad (depay, "sink");
+    g_assert (sinkpad);
+
+    lres = gst_pad_link (new_pad, sinkpad);
+    g_assert (lres == GST_PAD_LINK_OK);
+    gst_object_unref (sinkpad);
+    g_print ("New audio pipeline created\n");
+
+  } else {
+    g_print ("Could not create new audio pipeline\n");
+  }
 }
 
 /* will be called when srtprecv needs parameters */
@@ -272,19 +381,42 @@ static GstCaps *
 get_caps_cb (GstElement * srtpdec, guint ssrc, GSList ** streams)
 {
   GstCaps *caps = NULL;
-  SrtpRecvCaps *recvcaps = NULL;
+  struct SrtpRecvCaps *recvcaps = NULL;
 
   g_print ("Asked to send caps\n");
-  recvcaps = get_srtp_recv_caps_by_ssrc (ssrc, streams, FALSE);
+  recvcaps = get_srtp_recv_caps_by_ssrc (ssrc, streams, FALSE, FALSE);
 
   if (recvcaps == NULL || recvcaps->key == NULL) {
     g_print ("-> Invalid parameters\n");
   } else {
     caps = gst_caps_new_simple ("application/x-srtp", "mkey", G_TYPE_STRING,
-        recvcaps->key, "rtp_c", G_TYPE_UINT, recvcaps->rtp_cipher, "rtp_a",
-        G_TYPE_UINT, recvcaps->rtp_auth, "rtcp_c", G_TYPE_UINT,
-        recvcaps->rtcp_cipher, "rtcp_a", G_TYPE_UINT, recvcaps->rtcp_auth,
-        NULL);
+        recvcaps->key, "rtp-cipher", G_TYPE_UINT, recvcaps->rtp_cipher,
+        "rtp-auth", G_TYPE_UINT, recvcaps->rtp_auth, "rtcp-cipher",
+        G_TYPE_UINT, recvcaps->rtcp_cipher, "rtcp-auth", G_TYPE_UINT,
+        recvcaps->rtcp_auth, NULL);
+  }
+
+  return caps;
+}
+
+/* will be called when srtprecv needs new parameters */
+static GstCaps *
+new_caps_cb (GstElement * srtpdec, guint ssrc, GSList ** streams)
+{
+  GstCaps *caps = NULL;
+  struct SrtpRecvCaps *recvcaps = NULL;
+
+  g_print ("Asked to get new caps\n");
+  recvcaps = get_srtp_recv_caps_by_ssrc (ssrc, streams, FALSE, TRUE);
+
+  if (recvcaps == NULL || recvcaps->key == NULL) {
+    g_print ("-> Invalid parameters\n");
+  } else {
+    caps = gst_caps_new_simple ("application/x-srtp", "mkey", G_TYPE_STRING,
+        recvcaps->key, "rtp-cipher", G_TYPE_UINT, recvcaps->rtp_cipher,
+        "rtp-auth", G_TYPE_UINT, recvcaps->rtp_auth, "rtcp-cipher",
+        G_TYPE_UINT, recvcaps->rtcp_cipher, "rtcp-auth", G_TYPE_UINT,
+        recvcaps->rtcp_auth, NULL);
   }
 
   return caps;
@@ -295,45 +427,66 @@ static GstCaps *
 hard_limit_cb (GstElement * srtpdec, guint ssrc, GSList ** streams)
 {
   GstCaps *caps = NULL;
-  gchar input[31];
-  SrtpRecvCaps *recvcaps = NULL;
+  struct SrtpRecvCaps *recvcaps = NULL;
 
   g_print ("Asked to send caps after hard limit\n");
-  recvcaps = get_srtp_recv_caps_by_ssrc (ssrc, streams, TRUE);
+  recvcaps = get_srtp_recv_caps_by_ssrc (ssrc, streams, TRUE, FALSE);
 
   if (recvcaps == NULL || recvcaps->key == NULL) {
     g_print ("-> Invalid parameters\n");
   } else {
     caps = gst_caps_new_simple ("application/x-srtp", "mkey", G_TYPE_STRING,
-        recvcaps->key, "rtp_c", G_TYPE_UINT, recvcaps->rtp_cipher, "rtp_a",
-        G_TYPE_UINT, recvcaps->rtp_auth, "rtcp_c", G_TYPE_UINT,
-        recvcaps->rtcp_cipher, "rtcp_a", G_TYPE_UINT, recvcaps->rtcp_auth,
-        NULL);
+        recvcaps->key, "rtp-cipher", G_TYPE_UINT, recvcaps->rtp_cipher,
+        "rtp-auth", G_TYPE_UINT, recvcaps->rtp_auth, "rtcp-cipher",
+        G_TYPE_UINT, recvcaps->rtcp_cipher, "rtcp-auth", G_TYPE_UINT,
+        recvcaps->rtcp_auth, NULL);
   }
 
   return caps;
 }
 
-/* build a pipeline equivalent to:
- *
- * gst-launch -v gstrtpbin name=rtpbin                       \
- *      udpsrc caps=$AUDIO_CAPS port=5002 ! rtpbin.recv_rtp_sink_0              \
- *        rtpbin. ! rtppcmadepay ! alawdec ! audioconvert ! audioresample ! alsasink \
- *      udpsrc port=5003 ! rtpbin.recv_rtcp_sink_0                              \
- *        rtpbin.send_rtcp_src_0 ! udpsink port=5007 host=$DEST sync=false async=false
- */
+/* will be called when srtprecv reached the soft limit on its master key */
+static GstCaps *
+soft_limit_cb (GstElement * srtpdec, guint ssrc, GSList ** streams)
+{
+  g_print ("soft limit\n");
+
+  return NULL;
+}
+
+/* will be called when srtprecv reached the index limit */
+static GstCaps *
+index_limit_cb (GstElement * srtpdec, guint ssrc, GSList ** streams)
+{
+  GstCaps *caps = NULL;
+  struct SrtpRecvCaps *recvcaps = NULL;
+
+  g_print ("Asked to send caps after index limit\n");
+  recvcaps = get_srtp_recv_caps_by_ssrc (ssrc, streams, TRUE, FALSE);
+
+  if (recvcaps == NULL || recvcaps->key == NULL) {
+    g_print ("-> Invalid parameters\n");
+  } else {
+    caps = gst_caps_new_simple ("application/x-srtp", "mkey", G_TYPE_STRING,
+        recvcaps->key, "rtp-cipher", G_TYPE_UINT, recvcaps->rtp_cipher,
+        "rtp-auth", G_TYPE_UINT, recvcaps->rtp_auth, "rtcp-cipher",
+        G_TYPE_UINT, recvcaps->rtcp_cipher, "rtcp-auth", G_TYPE_UINT,
+        recvcaps->rtcp_auth, NULL);
+  }
+
+  return caps;
+}
+
 int
 main (int argc, char *argv[])
 {
   GstElement *srtpdec, *rtpbin, *rtpsrc, *rtcpsrc, *rtcpsink;
-  GstElement *audiodepay, *audiodec, *audiores, *audioconv, *audiosink;
   GstElement *pipeline;
   GMainLoop *loop;
   GstCaps *caps;
-  gboolean res;
   GstPadLinkReturn lres;
   GstPad *srcpad, *sinkpad;
-  GSList *streams;
+  GSList *streams = NULL;
 
   /* always init first */
   gst_init (&argc, &argv);
@@ -366,27 +519,6 @@ main (int argc, char *argv[])
   g_object_set (rtcpsink, "async", FALSE, "sync", FALSE, NULL);
 
   gst_bin_add_many (GST_BIN (pipeline), rtpsrc, rtcpsrc, rtcpsink, NULL);
-
-  /* the depayloading and decoding */
-  audiodepay = gst_element_factory_make (AUDIO_DEPAY, "audiodepay");
-  g_assert (audiodepay);
-  audiodec = gst_element_factory_make (AUDIO_DEC, "audiodec");
-  g_assert (audiodec);
-  /* the audio playback and format conversion */
-  audioconv = gst_element_factory_make ("audioconvert", "audioconv");
-  g_assert (audioconv);
-  audiores = gst_element_factory_make ("audioresample", "audiores");
-  g_assert (audiores);
-  audiosink = gst_element_factory_make (AUDIO_SINK, "audiosink");
-  g_assert (audiosink);
-
-  /* add depayloading and playback to the pipeline and link */
-  gst_bin_add_many (GST_BIN (pipeline), audiodepay, audiodec, audioconv,
-      audiores, audiosink, NULL);
-
-  res = gst_element_link_many (audiodepay, audiodec, audioconv, audiores,
-      audiosink, NULL);
-  g_assert (res == TRUE);
 
   /* the srtprecv element */
   srtpdec = gst_element_factory_make ("srtprecv", "srtpdec");
@@ -442,18 +574,24 @@ main (int argc, char *argv[])
   /* the RTP pad that we have to connect to the depayloader will be created
    * dynamically so we connect to the pad-added signal, pass the depayloader as
    * user_data so that we can link to it. */
-  g_signal_connect (rtpbin, "pad-added", G_CALLBACK (pad_added_cb), audiodepay);
+  g_signal_connect (rtpbin, "pad-added", G_CALLBACK (pad_added_cb), pipeline);
+
+  /* we need to run a GLib main loop to get the messages */
+  loop = g_main_loop_new (NULL, FALSE);
 
   g_signal_connect (srtpdec, "get-caps", G_CALLBACK (get_caps_cb), &streams);
+  g_signal_connect (srtpdec, "new-caps", G_CALLBACK (new_caps_cb), &streams);
   g_signal_connect (srtpdec, "hard-limit", G_CALLBACK (hard_limit_cb),
+      &streams);
+  g_signal_connect (srtpdec, "soft-limit", G_CALLBACK (soft_limit_cb),
+      &streams);
+  g_signal_connect (srtpdec, "index-limit", G_CALLBACK (index_limit_cb),
       &streams);
 
   /* set the pipeline to playing */
   g_print ("starting receiver pipeline\n");
   gst_element_set_state (pipeline, GST_STATE_PLAYING);
 
-  /* we need to run a GLib main loop to get the messages */
-  loop = g_main_loop_new (NULL, FALSE);
   g_main_loop_run (loop);
 
   g_print ("stopping receiver pipeline\n");
@@ -462,6 +600,7 @@ main (int argc, char *argv[])
   /* Empty stream list */
   empty_stream_list (&streams);
 
+  g_main_loop_unref (loop);
   gst_object_unref (pipeline);
 
   return 0;
