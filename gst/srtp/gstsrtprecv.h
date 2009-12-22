@@ -1,8 +1,8 @@
 /*
- * GStreamer
- * Copyright (C) 2005 Thomas Vander Stichele <thomas@apestaart.org>
- * Copyright (C) 2005 Ronald S. Bultje <rbultje@ronald.bitfreak.net>
- * Copyright (C) 2009 Gabriel Millaire <millaire.gabriel@gmail.com>
+ * GStreamer - GStreamer SRTP decoder
+ *
+ * Copyright 2009 Collabora Ltd.
+ *  @author: Gabriel Millaire <gabriel.millaire@collabora.co.uk>
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -85,12 +85,7 @@ struct _GstSrtpRecvClass
 {
   GstElementClass parent_class;
 
-  GstCaps* (*get_caps) (GstSrtpRecv *filter, guint ssrc);
-  GstCaps* (*new_caps) (GstSrtpRecv *filter, guint ssrc);
   void (*clear_streams) (GstSrtpRecv * filter);
-  void (*soft_limit) (GstSrtpRecv *filter, guint ssrc);
-  void (*hard_limit) (GstSrtpRecv *filter, guint ssrc);
-  void (*index_limit) (GstSrtpRecv *filter, guint ssrc);
 };
 
 GType gst_srtp_recv_get_type (void);

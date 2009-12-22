@@ -63,56 +63,54 @@
 struct SrtpSendCaps
 {
   gchar *key;
-  gchar *rtp_cipher;
-  gchar *rtp_auth;
-  gchar *rtcp_cipher;
-  gchar *rtcp_auth;
+  guint rtp_cipher;
+  guint rtp_auth;
+  guint rtcp_cipher;
+  guint rtcp_auth;
 };
 
-static void
-get_auth_property (gchar * auth, char *prop)
+static guint
+get_auth_property (char *prop)
 {
-  if (auth == NULL) {
-    g_print ("Error: NULL pointer\n");
-    return;
-  }
+  guint auth;
 
   if (g_strcmp0 (prop, "HMAC_SHA1") == 0) {
     g_print ("HMAC_SHA1\n");
-    memcpy ((void *) auth, "HMAC_SHA1", 9);
+    auth = 3;
   } else if (g_strcmp0 (prop, "NULL_AUTH") == 0) {
     g_print ("NULL_AUTH\n");
-    memcpy ((void *) auth, "NULL_AUTH", 9);
+    auth = 0;
   } else if (g_strcmp0 (prop, "STRONGHOLD_AUTH") == 0) {
     g_print ("STRONGHOLD_AUTH\n");
-    memcpy ((void *) auth, "STRONGHOLD_AUTH", 15);
+    auth = 3;
   } else {
     g_print ("Unknown value, using (default) HMAC_SHA1\n");
-    memcpy ((void *) auth, "HMAC_SHA1", 9);
+    auth = 3;
   }
+
+  return auth;
 }
 
-static void
-get_cipher_property (gchar * cipher, char *prop)
+static guint
+get_cipher_property (char *prop)
 {
-  if (cipher == NULL) {
-    g_print ("Error: NULL pointer");
-    return;
-  }
+  guint cipher;
 
   if (g_strcmp0 (prop, "AES_128_ICM") == 0) {
     g_print ("AES_128_ICM\n");
-    memcpy ((void *) cipher, "AES_128_ICM", 11);
+    cipher = 1;
   } else if (g_strcmp0 (prop, "NULL_CIPHER") == 0) {
     g_print ("NULL_CIPHER\n");
-    memcpy ((void *) cipher, "NULL_CIPHER", 11);
+    cipher = 0;
   } else if (g_strcmp0 (prop, "STRONGHOLD_CIPHER") == 0) {
     g_print ("STRONGHOLD_CIPHER\n");
-    memcpy ((void *) cipher, "STRONGHOLD_CIPHER", 17);
+    cipher = 1;
   } else {
     g_print ("Unknown value, using (default) AES_128_ICM\n");
-    memcpy ((void *) cipher, "AES_128_ICM", 11);
+    cipher = 1;
   }
+
+  return cipher;
 }
 
 /* Get an input from stdin and remove trailing newline
@@ -173,63 +171,51 @@ get_srtp_recv_caps (guint ssrc, struct SrtpSendCaps *sendcaps,
   if (key_only == FALSE) {
 
     /* Ask for the RTP cipher */
-    g_free (sendcaps->rtp_cipher);
-    sendcaps->rtp_cipher = g_new0 (gchar, 18);
-
     g_print ("Please enter the RTP cipher for SSRC %d: ", ssrc);
     ret = get_user_input (input, 18);
 
     if (ret < 1) {
       g_print
           ("\nYou failed to specify an RTP cipher. Using default AES_128_ICM\n\n");
-      memcpy ((void *) sendcaps->rtp_cipher, "AES_128_ICM", 11);
+      sendcaps->rtp_cipher = 1;
     } else {
-      get_cipher_property (sendcaps->rtp_cipher, input);
+      sendcaps->rtp_cipher = get_cipher_property (input);
     }
 
     /* Ask for the RTP auth */
-    g_free (sendcaps->rtp_auth);
-    sendcaps->rtp_auth = g_new0 (gchar, 16);
-
     g_print ("Please enter the RTP authentication for SSRC %d: ", ssrc);
     ret = get_user_input (input, 16);
 
     if (ret < 1) {
       g_print
           ("You failed to specify an RTP authentication. Using default HMAC_SHA1\n\n");
-      memcpy ((void *) sendcaps->rtp_auth, "HMAC_SHA1", 9);
+      sendcaps->rtp_auth = 3;
     } else {
-      get_auth_property (sendcaps->rtp_auth, input);
+      sendcaps->rtp_auth = get_auth_property (input);
     }
 
     /* Ask for the RTCP cipher */
-    g_free (sendcaps->rtcp_cipher);
-    sendcaps->rtcp_cipher = g_new0 (gchar, 18);
-
     g_print ("Please enter the RTCP cipher for SSRC %d: ", ssrc);
     ret = get_user_input (input, 18);
 
     if (ret < 1) {
       g_print
           ("You failed to specify an RTCP cipher. Using default AES_128_ICM\n\n");
-      memcpy ((void *) sendcaps->rtcp_cipher, "AES_128_ICM", 11);
+      sendcaps->rtcp_cipher = 1;
     } else {
-      get_cipher_property (sendcaps->rtcp_cipher, input);
+      sendcaps->rtcp_cipher = get_cipher_property (input);
     }
 
     /* Ask for the RTCP auth */
-    g_free (sendcaps->rtcp_auth);
-    sendcaps->rtcp_auth = g_new0 (gchar, 16);
-
     g_print ("Please enter the RTCP authentication for SSRC %d: ", ssrc);
     ret = get_user_input (input, 16);
 
     if (ret < 1) {
       g_print
           ("You failed to specify an RTCP authentication. Using default HMAC_SHA1\n\n");
-      memcpy ((void *) sendcaps->rtcp_auth, "HMAC_SHA1", 9);
+      sendcaps->rtcp_auth = 3;
     } else {
-      get_auth_property (sendcaps->rtcp_auth, input);
+      sendcaps->rtcp_auth = get_auth_property (input);
     }
   }
 
@@ -251,11 +237,11 @@ hard_limit_cb (GstElement * srtpenc, guint ssrc, struct SrtpSendCaps *sendcaps)
   if (ret == 0) {
     g_print ("-> Invalid parameters\n");
   } else {
-    /* Set properties on srtpenc */
     g_print ("Setting property on object\n");
     g_object_set (srtpenc, "key", sendcaps->key, "rtp-cipher",
         sendcaps->rtp_cipher, "rtp-auth", sendcaps->rtp_auth, "rtcp-cipher",
         sendcaps->rtcp_cipher, "rtcp-auth", sendcaps->rtcp_auth, NULL);
+    ret = 1;
   }
 
   return ret;
@@ -279,6 +265,7 @@ index_limit_cb (GstElement * srtpenc, guint ssrc, struct SrtpSendCaps *sendcaps)
     g_object_set (srtpenc, "key", sendcaps->key, "rtp-cipher",
         sendcaps->rtp_cipher, "rtp-auth", sendcaps->rtp_auth, "rtcp-cipher",
         sendcaps->rtcp_cipher, "rtcp-auth", sendcaps->rtcp_auth, NULL);
+    ret = 1;
   }
 
   return ret;
@@ -323,10 +310,6 @@ check_args (int argc, char *argv[], struct SrtpSendCaps *sendcaps)
   } else {
 
     sendcaps->key = g_new0 (gchar, 30);
-    sendcaps->rtp_cipher = g_new0 (gchar, 18);
-    sendcaps->rtp_auth = g_new0 (gchar, 16);
-    sendcaps->rtcp_cipher = g_new0 (gchar, 18);
-    sendcaps->rtcp_auth = g_new0 (gchar, 16);
 
     /* copy key to structure */
     len = strlen (argv[1]);
@@ -342,34 +325,34 @@ check_args (int argc, char *argv[], struct SrtpSendCaps *sendcaps)
     /* get cipher and auth */
     if (argc > 2 && !g_str_has_prefix (argv[2], "--")) {
       g_print ("RTP cipher : ");
-      get_cipher_property (sendcaps->rtp_cipher, argv[2]);
+      sendcaps->rtp_cipher = get_cipher_property (argv[2]);
     } else {
       g_print ("RTP cipher : (default) AES_128_ICM\n");
-      memcpy ((void *) sendcaps->rtp_cipher, "AES_128_ICM", 11);
+      sendcaps->rtp_cipher = 1;
     }
 
     if (argc > 3 && !g_str_has_prefix (argv[3], "--")) {
       g_print ("RTP authentication : ");
-      get_auth_property (sendcaps->rtp_auth, argv[3]);
+      sendcaps->rtp_auth = get_auth_property (argv[3]);
     } else {
       g_print ("RTP authentication : (default) HMAC_SHA1\n");
-      memcpy ((void *) sendcaps->rtp_auth, "HMAC_SHA1", 9);
+      sendcaps->rtp_auth = 3;
     }
 
     if (argc > 4 && !g_str_has_prefix (argv[4], "--")) {
       g_print ("RTCP cipher : ");
-      get_cipher_property (sendcaps->rtcp_cipher, argv[4]);
+      sendcaps->rtcp_cipher = get_cipher_property (argv[4]);
     } else {
       g_print ("RTCP cipher : (default) AES_128_ICM\n");
-      memcpy ((void *) sendcaps->rtcp_cipher, "AES_128_ICM", 11);
+      sendcaps->rtcp_cipher = 1;
     }
 
     if (argc > 5 && !g_str_has_prefix (argv[5], "--")) {
       g_print ("RTCP authentication : ");
-      get_auth_property (sendcaps->rtcp_auth, argv[5]);
+      sendcaps->rtcp_auth = get_auth_property (argv[5]);
     } else {
       g_print ("RTCP authentication : (default) HMAC_SHA1\n");
-      memcpy ((void *) sendcaps->rtcp_auth, "HMAC_SHA1", 9);
+      sendcaps->rtcp_auth = 3;
     }
 
     return argc;
@@ -410,6 +393,7 @@ main (int argc, char *argv[])
   g_assert (audioconv);
   audiores = gst_element_factory_make ("audioresample", "audiores");
   g_assert (audiores);
+
   /* the encoding and payloading */
   audioenc = gst_element_factory_make (AUDIO_ENC, "audioenc");
   g_assert (audioenc);
@@ -432,6 +416,7 @@ main (int argc, char *argv[])
 
   /* the srtpsend element */
   srtpenc = gst_element_factory_make ("srtpsend", "srtpenc");
+
   g_assert (srtpenc);
 
   g_object_set (srtpenc, "key", sendcaps->key, "rtp-cipher",
@@ -514,6 +499,7 @@ main (int argc, char *argv[])
 
   /* Connect to signal */
   loop = g_main_loop_new (NULL, FALSE);
+
   g_signal_connect (srtpenc, "hard-limit", G_CALLBACK (hard_limit_cb),
       sendcaps);
   g_signal_connect (srtpenc, "index-limit", G_CALLBACK (index_limit_cb),
@@ -534,22 +520,16 @@ main (int argc, char *argv[])
 
   g_main_loop_unref (loop);
 
-  g_slice_free (struct SrtpSendCaps, sendcaps);
-
   gst_element_release_request_pad (rtpbin, sinkpad4);
   gst_object_unref (sinkpad4);
 
-  gst_element_release_request_pad (srtpenc, sinkpad3);
-  gst_object_unref (sinkpad3);
-
   gst_element_release_request_pad (rtpbin, srcpad1);
-
-  gst_element_release_request_pad (srtpenc, sinkpad2);
-  gst_object_unref (sinkpad2);
 
   gst_element_release_request_pad (rtpbin, sinkpad1);
 
   gst_object_unref (pipeline);
+
+  g_slice_free (struct SrtpSendCaps, sendcaps);
 
   return 0;
 }

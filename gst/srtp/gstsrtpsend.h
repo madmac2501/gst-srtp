@@ -1,8 +1,8 @@
 /*
- * GStreamer
- * Copyright (C) 2005 Thomas Vander Stichele <thomas@apestaart.org>
- * Copyright (C) 2005 Ronald S. Bultje <rbultje@ronald.bitfreak.net>
- * Copyright (C) 2009 Gabriel Millaire <millaire.gabriel@gmail.com>
+ * GStreamer - GStreamer SRTP encoder
+ *
+ * Copyright 2009 Collabora Ltd.
+ *  @author: Gabriel Millaire <gabriel.millaire@collabora.co.uk>
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -84,7 +84,7 @@ struct _GstSrtpSend
   GstElement element;
 
   guint32 ssrc;
-  gchar *key;
+  guint8 *key;
   guint rtp_cipher;
   guint rtp_auth;
   guint rtcp_cipher;
@@ -94,18 +94,15 @@ struct _GstSrtpSend
   gboolean use_caps;
   gboolean first_session;
   gboolean ask_setcaps;
-  gboolean use_rand_key;
   gboolean limit_reached;
+  gboolean wait_change;
+
+  GType key_type;
 };
 
 struct _GstSrtpSendClass 
 {
   GstElementClass parent_class;
-  /*srtp_event_handler_func_t *srtp_event_handler;*/
-
-  void (*soft_limit) (GstSrtpSend * filter, guint ssrc);
-  guint (*hard_limit) (GstSrtpSend * filter, guint ssrc);
-  guint (*index_limit) (GstSrtpSend * filter, guint ssrc);
 };
 
 GType gst_srtp_send_get_type (void);

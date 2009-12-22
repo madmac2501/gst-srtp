@@ -1,8 +1,8 @@
 /*
- * GStreamer
- * Copyright (C) 2005 Thomas Vander Stichele <thomas@apestaart.org>
- * Copyright (C) 2005 Ronald S. Bultje <rbultje@ronald.bitfreak.net>
- * Copyright (C) 2009 Gabriel Millaire <millaire.gabriel@gmail.com>
+ * GStreamer - GStreamer SRTP encoder
+ *
+ * Copyright 2009 Collabora Ltd.
+ *  @author: Gabriel Millaire <gabriel.millaire@collabora.co.uk>
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -115,17 +115,19 @@ GST_DEBUG_CATEGORY_STATIC (gst_srtp_send_debug);
 #define GST_CAT_DEFAULT gst_srtp_send_debug
 
 /* Properties default values */
-#define DEFAULT_USE_RAND_KEY    FALSE
 #define DEFAULT_MASTER_KEY      NULL
 #define DEFAULT_RTP_CIPHER_STR  "AES_128_ICM"
 #define DEFAULT_RTP_AUTH_STR    "HMAC_SHA1"
 #define DEFAULT_RTCP_CIPHER_STR DEFAULT_RTP_CIPHER_STR
 #define DEFAULT_RTCP_AUTH_STR   DEFAULT_RTP_AUTH_STR
-#define DEFAULT_RTP_CIPHER      AES_128_ICM
-#define DEFAULT_RTP_AUTH        HMAC_SHA1
+#define DEFAULT_RTP_CIPHER      GST_SRTP_CIPHER_AES_128_ICM
+#define DEFAULT_RTP_AUTH        GST_SRTP_AUTH_HMAC_SHA1
 #define DEFAULT_RTCP_CIPHER     DEFAULT_RTP_CIPHER
 #define DEFAULT_RTCP_AUTH       DEFAULT_RTP_AUTH
-#define DEFAULT_USE_CAPS        FALSE
+#define DEFAULT_USE_CAPS        TRUE
+
+#define OBJECT_LOCK(arg)  {GST_DEBUG("Locking"); GST_OBJECT_LOCK(arg);}
+#define OBJECT_UNLOCK(arg)  {GST_DEBUG("Unlocking"); GST_OBJECT_UNLOCK(arg);}
 
 /* Filter signals and args */
 enum
@@ -139,7 +141,6 @@ enum
 enum
 {
   PROP_0,
-  PROP_USE_RAND_KEY,
   PROP_MKEY,
   PROP_RTP_CIPHER,
   PROP_RTP_AUTH,
@@ -184,6 +185,9 @@ GST_BOILERPLATE (GstSrtpSend, gst_srtp_send, GstElement, GST_TYPE_ELEMENT);
 
 static guint gst_srtp_send_signals[LAST_SIGNAL] = { 0 };
 
+static void gst_srtp_send_dispose (GObject * object);
+/* static gpointer mkey_copy (gpointer boxed); */
+
 static void gst_srtp_send_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec);
 static void gst_srtp_send_get_property (GObject * object, guint prop_id,
@@ -227,12 +231,61 @@ static GstPad *gst_srtp_send_request_new_pad (GstElement * element,
 static void gst_srtp_send_release_pad (GstElement * element, GstPad * pad);
 
 static GstSrtpSend *srtp_filter;
+/* static GType key_type; */
 
 struct _GstSrtpSendPads
 {
   GstPad *sinkpad;
   GstPad *srcpad;
 };
+
+enum
+{
+  GST_SRTP_CIPHER_NULL = 0,
+  GST_SRTP_CIPHER_AES_128_ICM
+};
+
+enum
+{
+  GST_SRTP_AUTH_NULL = 0,
+  GST_SRTP_AUTH_HMAC_SHA1 = 3
+};
+
+#define GST_SRTP_CIPHER_TYPE (gst_srtp_cipher_get_type())
+static GType
+gst_srtp_cipher_get_type (void)
+{
+  static GType type = 0;
+
+  static const GEnumValue types[] = {
+    {GST_SRTP_CIPHER_NULL, "NULL_CIPHER", "NULL_CIPHER"},
+    {GST_SRTP_CIPHER_AES_128_ICM, "AES_128_ICM", "AES_128_ICM"},
+    {0, NULL, NULL}
+  };
+
+  if (!type) {
+    type = g_enum_register_static ("GstSrtpCipher", types);
+  }
+  return type;
+}
+
+#define GST_SRTP_AUTH_TYPE (gst_srtp_auth_get_type())
+static GType
+gst_srtp_auth_get_type (void)
+{
+  static GType type = 0;
+
+  static const GEnumValue types[] = {
+    {GST_SRTP_AUTH_NULL, "NULL_AUTH", "NULL_AUTH"},
+    {GST_SRTP_AUTH_HMAC_SHA1, "HMAC_SHA1", "HMAC_SHA1"},
+    {0, NULL, NULL}
+  };
+
+  if (!type) {
+    type = g_enum_register_static ("GstSrtpAuth", types);
+  }
+  return type;
+}
 
 static void
 gst_srtp_send_base_init (gpointer gclass)
@@ -271,37 +324,40 @@ gst_srtp_send_class_init (GstSrtpSendClass * klass)
   /* Install callbacks */
   gobject_class->set_property = gst_srtp_send_set_property;
   gobject_class->get_property = gst_srtp_send_get_property;
+  gobject_class->dispose = gst_srtp_send_dispose;
   gstelement_class->request_new_pad =
       GST_DEBUG_FUNCPTR (gst_srtp_send_request_new_pad);
   gstelement_class->release_pad = GST_DEBUG_FUNCPTR (gst_srtp_send_release_pad);
   gstelement_class->change_state =
       GST_DEBUG_FUNCPTR (gst_srtp_send_change_state);
 
+  /* key_type = g_boxed_type_register_static ("mkey", mkey_copy, g_free); */
+
   /* Install properties */
-  g_object_class_install_property (gobject_class, PROP_USE_RAND_KEY,
-      g_param_spec_boolean ("use-rand-key", "Use Random Key", "Use random key?",
-          DEFAULT_USE_RAND_KEY, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_MKEY,
       g_param_spec_string ("key", "Key", "Master key", DEFAULT_MASTER_KEY,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  /*    g_param_spec_boxed ("key", "Key", "Master key", key_type,
+     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)); */
   g_object_class_install_property (gobject_class, PROP_RTP_CIPHER,
-      g_param_spec_string ("rtp-cipher", "RTP encryption cipher", "RTP Cipher",
-          DEFAULT_RTP_CIPHER_STR, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+      g_param_spec_enum ("rtp-cipher", "RTP Cipher", "RTP Cipher",
+          GST_SRTP_CIPHER_TYPE, DEFAULT_RTP_CIPHER,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_RTP_AUTH,
-      g_param_spec_string ("rtp-auth", "RTP Authentication",
-          "RTP Authentication", DEFAULT_RTP_AUTH_STR,
+      g_param_spec_enum ("rtp-auth", "RTP Authentication",
+          "RTP Authentication", GST_SRTP_AUTH_TYPE, DEFAULT_RTP_AUTH,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_RTCP_CIPHER,
-      g_param_spec_string ("rtcp-cipher", "RTCP encryption cipher",
-          "RTCP Cipher", DEFAULT_RTCP_CIPHER_STR,
+      g_param_spec_enum ("rtcp-cipher", "RTCP Cipher",
+          "RTCP Cipher", GST_SRTP_CIPHER_TYPE, DEFAULT_RTCP_CIPHER,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_RTCP_AUTH,
-      g_param_spec_string ("rtcp-auth", "RTCP Authentication",
-          "RTCP Authentication", DEFAULT_RTCP_AUTH_STR,
+      g_param_spec_enum ("rtcp-auth", "RTCP Authentication",
+          "RTCP Authentication", GST_SRTP_AUTH_TYPE, DEFAULT_RTCP_AUTH,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_USE_CAPS,
-      g_param_spec_boolean ("use-caps", "Use caps to send SRTP parameters",
-          "Use caps instead of signals?", DEFAULT_USE_CAPS,
+      g_param_spec_boolean ("use-caps", "Use caps",
+          "Use caps to send params?", DEFAULT_USE_CAPS,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
@@ -316,8 +372,7 @@ gst_srtp_send_class_init (GstSrtpSendClass * klass)
    */
   gst_srtp_send_signals[SIGNAL_SOFT_LIMIT] =
       g_signal_new ("soft-limit", G_TYPE_FROM_CLASS (klass),
-      G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstSrtpSendClass,
-          soft_limit), NULL, NULL, gst_srtp_marshal_VOID__UINT,
+      G_SIGNAL_RUN_LAST, 0, NULL, NULL, gst_srtp_marshal_VOID__UINT,
       G_TYPE_NONE, 1, G_TYPE_UINT);
 
   /**
@@ -333,8 +388,7 @@ gst_srtp_send_class_init (GstSrtpSendClass * klass)
    */
   gst_srtp_send_signals[SIGNAL_HARD_LIMIT] =
       g_signal_new ("hard-limit", G_TYPE_FROM_CLASS (klass),
-      G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstSrtpSendClass,
-          hard_limit), NULL, NULL, gst_srtp_marshal_UINT__UINT,
+      G_SIGNAL_RUN_LAST, 0, NULL, NULL, gst_srtp_marshal_UINT__UINT,
       G_TYPE_UINT, 1, G_TYPE_UINT);
 
   /**
@@ -351,8 +405,7 @@ gst_srtp_send_class_init (GstSrtpSendClass * klass)
    */
   gst_srtp_send_signals[SIGNAL_INDEX_LIMIT] =
       g_signal_new ("index-limit", G_TYPE_FROM_CLASS (klass),
-      G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstSrtpSendClass,
-          index_limit), NULL, NULL, gst_srtp_marshal_UINT__UINT,
+      G_SIGNAL_RUN_LAST, 0, NULL, NULL, gst_srtp_marshal_UINT__UINT,
       G_TYPE_UINT, 1, G_TYPE_UINT);
 }
 
@@ -361,13 +414,12 @@ gst_srtp_send_class_init (GstSrtpSendClass * klass)
 static void
 gst_srtp_send_init (GstSrtpSend * filter, GstSrtpSendClass * gclass)
 {
-  GST_LOG_OBJECT (filter, "INIT");
   srtp_init ();
   srtp_filter = filter;
 
   filter->limit_reached = FALSE;
+  filter->wait_change = FALSE;
   filter->use_caps = DEFAULT_USE_CAPS;
-  filter->use_rand_key = DEFAULT_USE_RAND_KEY;
   filter->ask_setcaps = FALSE;
   filter->first_session = TRUE;
   filter->key = DEFAULT_MASTER_KEY;
@@ -377,73 +429,19 @@ gst_srtp_send_init (GstSrtpSend * filter, GstSrtpSendClass * gclass)
   filter->rtcp_auth = DEFAULT_RTCP_AUTH;
 }
 
-/* Returns the cipher type from a string; NULL if unrecognized
- */
-static guint
-get_rtp_cipher_property (const gchar * prop)
+/*
+static gpointer mkey_copy (gpointer boxed)
 {
-  guint ret = DEFAULT_RTP_CIPHER;
+  guint8 *data;
 
-  if (g_strcmp0 (prop, "AES_128_ICM") == 0)
-    ret = AES_128_ICM;
-  else if (g_strcmp0 (prop, "STRONGHOLD_CIPHER") == 0)
-    ret = STRONGHOLD_CIPHER;
-  else if (g_strcmp0 (prop, "NULL_CIPHER") == 0)
-    ret = NULL_CIPHER;
-  else
-    GST_WARNING ("Unknown value. Using default encryption (%s)",
-        DEFAULT_RTP_CIPHER_STR);
+  if (boxed == NULL)
+    return NULL;
 
-  return ret;
+  data = g_new0 (guint8, 30);
+  memcpy ((void *) data, (void *) boxed, 30);
+  return data;
 }
-
-/* Returns the authentication type from a string; NULL if unrecognized
- */
-static guint
-get_rtp_auth_property (const gchar * prop)
-{
-  guint ret = DEFAULT_RTP_AUTH;
-
-  if (g_strcmp0 (prop, "HMAC_SHA1") == 0)
-    ret = HMAC_SHA1;
-  else if (g_strcmp0 (prop, "STRONGHOLD_AUTH") == 0)
-    ret = STRONGHOLD_AUTH;
-  else if (g_strcmp0 (prop, "NULL_AUTH") == 0)
-    ret = NULL_AUTH;
-  else
-    GST_WARNING ("Unknown value. Using default authentication (%s)",
-        DEFAULT_RTP_AUTH_STR);
-
-  return ret;
-}
-
-/* Returns the cipher name from a guint; NULL if unrecognized
- */
-static void
-set_rtp_cipher_property (GValue * value, const guint prop)
-{
-  switch (prop) {
-    case AES_128_ICM:
-      g_value_set_string (value, "AES_128_ICM");        /* STRONGHOLD */
-      break;
-    default:
-      g_value_set_string (value, "NULL_CIPHER");
-  }
-}
-
-/* Returns the authentication name from a guint; NULL if unrecognized
- */
-static void
-set_rtp_auth_property (GValue * value, const guint prop)
-{
-  switch (prop) {
-    case HMAC_SHA1:
-      g_value_set_string (value, "HMAC_SHA1");  /* STRONGHOLD */
-      break;
-    default:
-      g_value_set_string (value, "NULL_AUTH");
-  }
-}
+*/
 
 /* Sets the policy (cipher, authentication)
  */
@@ -451,8 +449,8 @@ static void
 set_crypto_policy_cipher_auth (guint cipher, guint auth,
     crypto_policy_t * policy)
 {
-  if (cipher == AES_128_ICM) {
-    if (auth == HMAC_SHA1) {
+  if (cipher == GST_SRTP_CIPHER_AES_128_ICM) {
+    if (auth == GST_SRTP_AUTH_HMAC_SHA1) {
       crypto_policy_set_aes_cm_128_hmac_sha1_80 (policy);
       GST_DEBUG ("Policy set to AES_128_ICM and HMAC_SHA1");
     } else {
@@ -460,7 +458,7 @@ set_crypto_policy_cipher_auth (guint cipher, guint auth,
       GST_DEBUG ("Policy set to AES_128_ICM and NULL authentication");
     }
   } else {
-    if (auth == HMAC_SHA1) {
+    if (auth == GST_SRTP_AUTH_HMAC_SHA1) {
       crypto_policy_set_null_cipher_hmac_sha1_80 (policy);
       GST_DEBUG ("Policy set to NULL cipher and HMAC_SHA1");
     } else {
@@ -473,24 +471,6 @@ set_crypto_policy_cipher_auth (guint cipher, guint auth,
       GST_DEBUG ("Policy set to NULL cipher and NULL authentication");
     }
   }
-}
-
-/* Make a random key of length len using readable characters
- * (for testing only, so not real random)
- */
-static gboolean
-get_random_key (gchar * key, guint32 len)
-{
-  gboolean ret = FALSE;
-  gint32 tmp;
-  int i;
-  GRand *r = g_rand_new ();
-
-  for (i = 0; i < len; i++) {
-    tmp = g_rand_int_range (r, 33, 127);
-    key[i] = tmp;
-  }
-  return ret;
 }
 
 /* Check if SSRC in buffer is valid
@@ -518,7 +498,7 @@ validate_ssrc (GstSrtpSend * filter, guint32 ssrc)
       ret = ssrc_valid;
     }
 
-  } else {                      /* SSRC is invalid : force */
+  } else {                      /* SSRC is invalid */
     ret = ssrc_invalid;
   }
 
@@ -538,7 +518,7 @@ get_ssrc_from_buffer (GstBuffer * buf, guint32 * ssrc, gboolean is_rtcp)
   guint32 packet_count;
   guint32 octet_count;
 
-  if (is_rtcp) {                /* Get SSRC from SDES packet (RTCP) */
+  if (is_rtcp) {                /* Get SSRC from RR or SR packet (RTCP) */
     if (gst_rtcp_buffer_get_first_packet (buf, &packet)) {
       do {
         switch (gst_rtcp_packet_get_type (&packet)) {
@@ -580,10 +560,10 @@ init_new_stream (GstSrtpSend * filter, guint32 ssrc)
         "RTCP authentication can't be NULL if encryption is not NULL. Setting RTCP authentication to HMAC_SHA1.");
   }
 
-  GST_LOG_OBJECT (filter, "Setting RTP policy...");
+  GST_INFO_OBJECT (filter, "Setting RTP policy...");
   set_crypto_policy_cipher_auth (filter->rtp_cipher, filter->rtp_auth,
       &policy.rtp);
-  GST_LOG_OBJECT (filter, "Setting RTCP policy...");
+  GST_INFO_OBJECT (filter, "Setting RTCP policy...");
   set_crypto_policy_cipher_auth (filter->rtcp_cipher, filter->rtcp_auth,
       &policy.rtcp);
 
@@ -625,34 +605,25 @@ validate_buffer (GstSrtpSend * filter, GstBuffer * buf, gboolean is_rtcp)
 
       /* Check if key is valid */
       if (!filter->key) {
-        if (filter->use_rand_key) {     /* For testing only */
-          filter->key = g_new0 (gchar, SRTP_MAX_KEY_LEN);
-          get_random_key (filter->key, SRTP_MAX_KEY_LEN);
-          GST_LOG_OBJECT (filter, "Setting random key for SSRC %d : [%s]",
-              filter->ssrc, filter->key);
-        } else {
-          GST_ERROR_OBJECT (filter, "No master key specified");
-          GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), LIBRARY, SETTINGS,
-              (NULL), ("No master key property specified"));
-          return buffer_drop_fail;
-        }
+        GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), LIBRARY, SETTINGS,
+            (NULL), ("No master key property specified"));
+        return buffer_drop_fail;
       }
 
       err = init_new_stream (filter, filter->ssrc);
 
       if (err != err_status_ok) {
-        GST_ERROR_OBJECT (filter,
-            "Could not set stream for SSRC %d (error code %d)", filter->ssrc,
-            err);
         GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), LIBRARY, SETTINGS,
             (NULL), ("Could not init new stream"));
         /* Will drop buffer and fail */
         ret = buffer_drop_fail;
+
       } else {
-        GST_LOG_OBJECT (filter, "Stream set for SSRC %d", filter->ssrc);
+        GST_INFO_OBJECT (filter, "Stream set for SSRC %d", filter->ssrc);
         filter->first_session = FALSE;
         ret = buffer_valid;
       }
+
     } else if (state == ssrc_invalid) { /* Wrong SSRC */
       GST_WARNING_OBJECT (filter, "Wrong SSRC in stream (%d)", ssrc);
 
@@ -674,7 +645,7 @@ validate_buffer (GstSrtpSend * filter, GstBuffer * buf, gboolean is_rtcp)
 static void
 gst_srtp_send_reset (GstSrtpSend * filter)
 {
-  GST_LOG_OBJECT (filter, "Releasing ressources");
+  GST_INFO_OBJECT (filter, "Releasing ressources");
 
   GST_OBJECT_LOCK (filter);
 
@@ -683,6 +654,7 @@ gst_srtp_send_reset (GstSrtpSend * filter)
 
   filter->ask_setcaps = TRUE;
   filter->limit_reached = FALSE;
+  filter->wait_change = FALSE;
   filter->first_session = TRUE;
 
   GST_OBJECT_UNLOCK (filter);
@@ -695,7 +667,6 @@ static GstPad *
 create_rtp_sink (GstSrtpSend * filter, const gchar * name)
 {
   gchar *sinkpadname, *srcpadname;
-  gchar temp[81];
   gint nb = 0;
   GstSrtpSendPads *rtppad;
 
@@ -705,7 +676,7 @@ create_rtp_sink (GstSrtpSend * filter, const gchar * name)
   rtppad->sinkpad = gst_pad_new_from_static_template (&rtp_sink_template, name);
 
   sinkpadname = gst_pad_get_name (rtppad->sinkpad);
-  sscanf (sinkpadname, "%s_%d", temp, &nb);
+  sscanf (sinkpadname, "rtp_sink_%d", &nb);
   srcpadname = g_strdup_printf ("rtp_src_%d", nb);
 
   GST_DEBUG_OBJECT (filter, "creating RTP source pad");
@@ -730,8 +701,6 @@ create_rtp_sink (GstSrtpSend * filter, const gchar * name)
   gst_pad_set_active (rtppad->sinkpad, TRUE);
   gst_element_add_pad (GST_ELEMENT_CAST (filter), rtppad->sinkpad);
 
-  gst_pad_set_getcaps_function (rtppad->srcpad,
-      GST_DEBUG_FUNCPTR (gst_srtp_send_sink_getcaps_rtp));
   gst_pad_set_iterate_internal_links_function (rtppad->srcpad,
       GST_DEBUG_FUNCPTR (gst_srtp_send_iterate_internal_links_rtp));
   gst_pad_set_event_function (rtppad->srcpad,
@@ -750,7 +719,6 @@ create_rtcp_sink (GstSrtpSend * filter, const gchar * name)
 {
   gchar *sinkpadname, *srcpadname;
   GstSrtpSendPads *rtcppad;
-  gchar temp[81];
   gint nb = 0;
 
   rtcppad = g_slice_new0 (GstSrtpSendPads);
@@ -760,7 +728,7 @@ create_rtcp_sink (GstSrtpSend * filter, const gchar * name)
       gst_pad_new_from_static_template (&rtcp_sink_template, name);
 
   sinkpadname = gst_pad_get_name (rtcppad->sinkpad);
-  sscanf (sinkpadname, "%s_%d", temp, &nb);
+  sscanf (sinkpadname, "rtcp_sink_%d", &nb);
   srcpadname = g_strdup_printf ("rtcp_src_%d", nb);
 
   GST_DEBUG_OBJECT (filter, "creating RTCP source pad");
@@ -785,9 +753,6 @@ create_rtcp_sink (GstSrtpSend * filter, const gchar * name)
   gst_pad_set_active (rtcppad->sinkpad, TRUE);
   gst_element_add_pad (GST_ELEMENT_CAST (filter), rtcppad->sinkpad);
 
-
-  gst_pad_set_getcaps_function (rtcppad->srcpad,
-      GST_DEBUG_FUNCPTR (gst_srtp_send_sink_getcaps_rtcp));
   gst_pad_set_iterate_internal_links_function (rtcppad->srcpad,
       GST_DEBUG_FUNCPTR (gst_srtp_send_iterate_internal_links_rtcp));
   gst_pad_set_event_function (rtcppad->srcpad,
@@ -811,7 +776,7 @@ gst_srtp_send_request_new_pad (GstElement * element,
   filter = GST_SRTPSEND (element);
   klass = GST_ELEMENT_GET_CLASS (element);
 
-  GST_LOG_OBJECT (element, "New pad requested");
+  GST_INFO_OBJECT (element, "New pad requested");
 
   if (templ == gst_element_class_get_pad_template (klass, "rtp_sink_%d")) {
     pad = create_rtp_sink (filter, name);
@@ -819,12 +784,31 @@ gst_srtp_send_request_new_pad (GstElement * element,
           "rtcp_sink_%d")) {
     pad = create_rtcp_sink (filter, name);
   } else {
-    GST_ERROR_OBJECT (element, "Wrong template");
     GST_ELEMENT_ERROR (element, CORE, PAD, (NULL),
         ("Could not find specified template"));
   }
 
   return pad;
+}
+
+/* Dispose
+ */
+static void
+gst_srtp_send_dispose (GObject * object)
+{
+  GstSrtpSend *filter = GST_SRTPSEND (object);
+  GstIterator *it;
+  GstPad *pad;
+
+  GST_DEBUG_OBJECT (object, "Dispose...");
+
+  filter->limit_reached = TRUE;
+  it = gst_element_iterate_sink_pads (GST_ELEMENT_CAST (object));
+
+  while (gst_iterator_next (it, (gpointer *) & pad) == GST_ITERATOR_OK) {
+    gst_srtp_send_release_pad (GST_ELEMENT_CAST (object), pad);
+    gst_iterator_resync (it);
+  }
 }
 
 /* Set property
@@ -835,7 +819,9 @@ gst_srtp_send_set_property (GObject * object, guint prop_id,
 {
   const gchar *key;
   guint len;
+
   GstSrtpSend *filter = GST_SRTPSEND (object);
+
   GST_OBJECT_LOCK (filter);
 
   filter->ask_setcaps = TRUE;
@@ -843,47 +829,43 @@ gst_srtp_send_set_property (GObject * object, guint prop_id,
   switch (prop_id) {
     case PROP_USE_CAPS:
       filter->use_caps = g_value_get_boolean (value);
-      GST_LOG_OBJECT (object, "Set property: use_caps=%d", filter->use_caps);
-      break;
-
-    case PROP_USE_RAND_KEY:
-      filter->use_rand_key = g_value_get_boolean (value);
-      GST_LOG_OBJECT (object, "Set property: use random key=%d",
-          filter->use_rand_key);
+      GST_INFO_OBJECT (object, "Set property: use_caps=%d", filter->use_caps);
       break;
 
     case PROP_MKEY:
       g_free (filter->key);
-      filter->key = g_new0 (gchar, SRTP_MAX_KEY_LEN);
+      filter->key = g_new0 (guint8, SRTP_MAX_KEY_LEN);
       key = g_value_get_string (value);
       len = strlen (key);
       if (len > SRTP_MAX_KEY_LEN)
         len = SRTP_MAX_KEY_LEN;
       memcpy ((void *) filter->key, (void *) key, len);
-      GST_LOG_OBJECT (object, "Set property: key=[%s]", filter->key);
+      GST_INFO_OBJECT (object, "Set property: key=[%s]", filter->key);
+      /* g_free (filter->key);
+         filter->key = g_boxed_copy (key_type, g_value_get_boxed (value));
+         GST_INFO_OBJECT (object, "Set property: key=[%30s]", (gchar *) filter->key); */
       filter->limit_reached = FALSE;
       break;
 
     case PROP_RTP_CIPHER:
-      filter->rtp_cipher = get_rtp_cipher_property (g_value_get_string (value));
-      GST_LOG_OBJECT (object, "Set property: rtp cipher=%d",
+      filter->rtp_cipher = g_value_get_enum (value);
+      GST_INFO_OBJECT (object, "Set property: rtp cipher=%d",
           filter->rtp_cipher);
       break;
     case PROP_RTP_AUTH:
-      filter->rtp_auth = get_rtp_auth_property (g_value_get_string (value));
-      GST_LOG_OBJECT (object, "Set property: rtp auth=%d", filter->rtp_auth);
+      filter->rtp_auth = g_value_get_enum (value);
+      GST_INFO_OBJECT (object, "Set property: rtp auth=%d", filter->rtp_auth);
       break;
 
     case PROP_RTCP_CIPHER:
-      filter->rtcp_cipher =
-          get_rtp_cipher_property (g_value_get_string (value));
-      GST_LOG_OBJECT (object, "Set property: rtcp cipher=%d",
+      filter->rtcp_cipher = g_value_get_enum (value);
+      GST_INFO_OBJECT (object, "Set property: rtcp cipher=%d",
           filter->rtcp_cipher);
       break;
 
     case PROP_RTCP_AUTH:
-      filter->rtcp_auth = get_rtp_auth_property (g_value_get_string (value));
-      GST_LOG_OBJECT (object, "Set property: rtcp auth=%d", filter->rtcp_auth);
+      filter->rtcp_auth = g_value_get_enum (value);
+      GST_INFO_OBJECT (object, "Set property: rtcp auth=%d", filter->rtcp_auth);
       break;
 
     default:
@@ -907,23 +889,21 @@ gst_srtp_send_get_property (GObject * object, guint prop_id,
     case PROP_USE_CAPS:
       g_value_set_boolean (value, filter->use_caps);
       break;
-    case PROP_USE_RAND_KEY:
-      g_value_set_boolean (value, filter->use_rand_key);
-      break;
     case PROP_MKEY:
-      g_value_set_string (value, filter->key);
+      g_value_set_string (value, (gchar *) filter->key);
+      /* g_value_set_boxed (value, filter->key); */
       break;
     case PROP_RTP_CIPHER:
-      set_rtp_cipher_property (value, filter->rtp_cipher);
+      g_value_set_enum (value, filter->rtp_cipher);
       break;
     case PROP_RTCP_CIPHER:
-      set_rtp_cipher_property (value, filter->rtcp_cipher);
+      g_value_set_enum (value, filter->rtcp_cipher);
       break;
     case PROP_RTP_AUTH:
-      set_rtp_auth_property (value, filter->rtp_auth);
+      g_value_set_enum (value, filter->rtp_auth);
       break;
     case PROP_RTCP_AUTH:
-      set_rtp_auth_property (value, filter->rtcp_auth);
+      g_value_set_enum (value, filter->rtcp_auth);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -948,18 +928,19 @@ gst_srtp_send_release_pad (GstElement * element, GstPad * sinkpad)
 {
   GstPad *srcpad = NULL;
 
-  GST_LOG_OBJECT (element, "Releasing pad %s:%s", GST_DEBUG_PAD_NAME (sinkpad));
+  GST_INFO_OBJECT (element, "Releasing pad %s:%s",
+      GST_DEBUG_PAD_NAME (sinkpad));
 
   srcpad = gst_pad_get_element_private (sinkpad);
 
   if (srcpad) {
-    /* deactivate from sink to source */
-    gst_pad_set_active (sinkpad, FALSE);
+    /* deactivate from source to sink */
     gst_pad_set_active (srcpad, FALSE);
+    gst_pad_set_active (sinkpad, FALSE);
 
     /* remove pads */
-    gst_element_remove_pad (element, sinkpad);
     gst_element_remove_pad (element, srcpad);
+    gst_element_remove_pad (element, sinkpad);
 
     srcpad = NULL;
     sinkpad = NULL;
@@ -993,18 +974,17 @@ gst_srtp_send_sink_setcaps (GstPad * pad, GstCaps * caps, gboolean is_rtcp,
     gboolean ask_setcaps)
 {
   GstSrtpSend *filter = NULL;
-  GstCaps *othercaps = NULL;
   GstPad *otherpad = NULL;
   GstStructure *ps = NULL;
 
   filter = GST_SRTPSEND (gst_pad_get_parent (pad));
 
-  othercaps = gst_caps_make_writable (caps);
+  caps = gst_caps_make_writable (caps);
 
-  if (!(ps = gst_caps_get_structure (othercaps, 0)))
+  if (!(ps = gst_caps_get_structure (caps, 0)))
     goto error_caps;
 
-  GST_DEBUG_OBJECT (pad, "Sink caps: %" GST_PTR_FORMAT, othercaps);
+  GST_DEBUG_OBJECT (pad, "Sink caps: %" GST_PTR_FORMAT, caps);
 
   if (is_rtcp)
     gst_structure_set_name (ps, "application/x-srtcp");
@@ -1014,7 +994,7 @@ gst_srtp_send_sink_setcaps (GstPad * pad, GstCaps * caps, gboolean is_rtcp,
   GST_OBJECT_LOCK (filter);
 
   if (filter->use_caps) {
-    /* For testing purpose, add srtp-specific params to source caps */
+    /* Add srtp-specific params to source caps */
     gst_structure_set (ps, "mkey", G_TYPE_STRING, filter->key,
         "rtp-cipher", G_TYPE_UINT, filter->rtp_cipher,
         "rtp-auth", G_TYPE_UINT, filter->rtp_auth,
@@ -1024,12 +1004,12 @@ gst_srtp_send_sink_setcaps (GstPad * pad, GstCaps * caps, gboolean is_rtcp,
 
   GST_OBJECT_UNLOCK (filter);
 
-  GST_DEBUG_OBJECT (pad, "Source caps: %" GST_PTR_FORMAT, othercaps);
+  GST_DEBUG_OBJECT (pad, "Source caps: %" GST_PTR_FORMAT, caps);
 
   /* Set caps on source pad */
   otherpad = get_rtp_other_pad (pad);
 
-  if (!gst_pad_set_caps (otherpad, othercaps))
+  if (!gst_pad_set_caps (otherpad, caps))
     goto error_caps;
 
   gst_object_unref (filter);
@@ -1037,12 +1017,9 @@ gst_srtp_send_sink_setcaps (GstPad * pad, GstCaps * caps, gboolean is_rtcp,
   return TRUE;
 
 error_caps:
-  {
-    GST_ERROR_OBJECT (pad, "Unable to set caps on source pad");
-    GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), CORE, CAPS, (NULL),
-        ("Unable to set caps on source pad"));
-    return FALSE;
-  }
+  GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), CORE, CAPS, (NULL),
+      ("Unable to set caps on source pad"));
+  return GST_FLOW_NOT_NEGOTIATED;
 }
 
 /* RTP pad getcaps function
@@ -1067,7 +1044,28 @@ gst_srtp_send_sink_getcaps_rtcp (GstPad * pad)
 static GstCaps *
 gst_srtp_send_sink_getcaps (GstPad * pad, gboolean is_rtcp)
 {
-  return gst_caps_copy (gst_pad_get_pad_template_caps (pad));
+  GstPad *otherpad;
+  GstStructure *ps = NULL;
+  GstCaps *ret = NULL;
+
+  otherpad = (GstPad *) gst_pad_get_element_private (pad);
+
+  if (!(ret = gst_pad_get_allowed_caps (otherpad))) {
+    ret = gst_caps_copy (gst_pad_get_pad_template_caps (pad));
+  } else {
+
+    if (!(ps = gst_caps_get_structure (ret, 0))) {
+      gst_caps_unref (ret);
+      ret = gst_caps_copy (gst_pad_get_pad_template_caps (pad));
+    } else {
+      if (is_rtcp)
+        gst_structure_set_name (ps, "application/x-rtcp");
+      else
+        gst_structure_set_name (ps, "application/x-rtp");
+    }
+  }
+
+  return ret;
 }
 
 /* RTP pad internal_links function
@@ -1141,113 +1139,125 @@ gst_srtp_send_chain (GstPad * pad, GstBuffer * buf, gboolean is_rtcp)
   GstFlowReturn ret = GST_FLOW_OK;
   GstPad *otherpad = NULL;
   err_status_t err = err_status_ok;
-  gint size = GST_BUFFER_SIZE (buf);
-  gint size2 = size + SRTP_MAX_TRAILER_LEN + 1;
-  gint size_p = size;
+  gint size_before, size_max, size_after;
   buffer_state_t bufstate = buffer_drop_continue;
   GstBuffer *buf2 = NULL;
 
   filter = GST_SRTPSEND (gst_pad_get_parent (pad));
 
   /* Check if key hard limit is reached */
-  if (!filter->limit_reached) {
-    GST_LOG_OBJECT (pad, "Sending %s buffer", is_rtcp ? "RTCP" : "RTP");
-    GST_OBJECT_LOCK (filter);
+  while (filter->wait_change);
 
-    /* Get linked source pad */
-    if (!(otherpad = get_rtp_other_pad (pad))) {
-      GST_ERROR_OBJECT (pad, "Unable to get source pad");
-      GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), CORE, PAD, (NULL),
-          ("Unable to get linked pad"));
-      bufstate = buffer_drop_fail;
-    } else {
-      /* Validate buffer SSRC */
-      bufstate = validate_buffer (filter, buf, is_rtcp);
-    }
-
-    if (bufstate != buffer_valid) {
-      GST_OBJECT_UNLOCK (filter);
-      goto invalid;
-    }
-
-    size = GST_BUFFER_SIZE (buf);
-    size2 = size + SRTP_MAX_TRAILER_LEN + 10;
-    size_p = size;
-
-    /* For testing : update source caps if asked */
-    if (filter->use_caps && filter->ask_setcaps) {
-      GST_DEBUG_OBJECT (pad, "Asked to set caps...");
-      filter->ask_setcaps = FALSE;
-      GST_OBJECT_UNLOCK (filter);
-
-      if (!gst_srtp_send_sink_setcaps (pad, GST_PAD_CAPS (pad), is_rtcp, FALSE)) {
-        bufstate = buffer_drop_continue;
-        goto invalid;
-      }
-
-    } else {
-      filter->ask_setcaps = FALSE;
-      GST_OBJECT_UNLOCK (filter);
-    }
-
-    /* Create a bigger buffer to add protection */
-    ret = gst_pad_alloc_buffer_and_set_caps (otherpad, 0, size2,
-        GST_PAD_CAPS (otherpad), &buf2);
-
-    if (ret != GST_FLOW_OK) {
-      GST_ERROR_OBJECT (pad, "Unable to allocate new buffer");
-      GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), RESOURCE, FAILED, (NULL),
-          ("Unable to allocate new buffer"));
-      bufstate = buffer_drop_fail;
-      goto invalid;
-    }
-
-    memcpy (GST_BUFFER_DATA (buf2), GST_BUFFER_DATA (buf), size);
-
-    GST_OBJECT_LOCK (filter);
-
-    if (is_rtcp)
-      err = srtp_protect_rtcp (filter->session, GST_BUFFER_DATA (buf2),
-          &size_p);
-    else
-      err = srtp_protect (filter->session, GST_BUFFER_DATA (buf2), &size_p);
-
+  if (filter->limit_reached) {
     GST_OBJECT_UNLOCK (filter);
-
-    if (err == err_status_ok) {
-      /* Buffer protected */
-      GST_BUFFER_SIZE (buf2) = size_p;
-      gst_buffer_copy_metadata (buf2, buf,
-          GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS);
-      gst_buffer_unref (buf);
-      buf = NULL;
-
-      /* Push buffer to source pad */
-      ret = gst_pad_push (otherpad, buf2);
-
-      if (ret != GST_FLOW_OK) {
-        GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), CORE, PAD, (NULL),
-            ("Unable to push buffer on source pad"));
-        bufstate = buffer_drop_fail;
-      }
-
-    } else {                    /* srtp_protect failed */
-      GST_WARNING_OBJECT (pad,
-          "Unable to protect buffer (protect failed) code %d", err);
-      bufstate = buffer_drop_continue;
-    }
-  } else {
-    GST_ERROR_OBJECT (pad, "Unable to protect buffer (hard limit reached)");
     GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), LIBRARY, FAILED, (NULL),
         ("Unable to protect buffer (hard limit reached)"));
-    bufstate = buffer_drop_fail;
+    goto drop_fail;
+  }
+
+  GST_OBJECT_LOCK (filter);
+
+  /* Get linked source pad */
+  if (!(otherpad = get_rtp_other_pad (pad))) {
+    GST_OBJECT_UNLOCK (filter);
+    GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), CORE, PAD, (NULL),
+        ("Unable to get linked pad"));
+    goto drop_fail;
+  }
+
+unprotect:
+  /* Validate buffer SSRC */
+  bufstate = validate_buffer (filter, buf, is_rtcp);
+
+  if (bufstate != buffer_valid) {
+    GST_OBJECT_UNLOCK (filter);
+    goto invalid;
+  }
+
+  size_before = GST_BUFFER_SIZE (buf);
+  size_max = size_before + SRTP_MAX_TRAILER_LEN + 10;
+  size_after = size_before;
+
+  /* Update source caps if asked */
+  if (filter->use_caps && filter->ask_setcaps) {
+    GST_DEBUG_OBJECT (pad, "Asked to set caps...");
+    filter->ask_setcaps = FALSE;
+    GST_OBJECT_UNLOCK (filter);
+
+    if (!gst_srtp_send_sink_setcaps (pad, GST_PAD_CAPS (pad), is_rtcp, FALSE))
+      goto drop_fail;
+
+    GST_OBJECT_LOCK (filter);
+
+  } else {
+    filter->ask_setcaps = FALSE;
+  }
+
+  /* Create a bigger buffer to add protection */
+  ret = gst_pad_alloc_buffer_and_set_caps (otherpad, 0, size_max,
+      GST_PAD_CAPS (otherpad), &buf2);
+
+  if (ret != GST_FLOW_OK) {
+    GST_OBJECT_UNLOCK (filter);
+    GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), RESOURCE, FAILED, (NULL),
+        ("Unable to allocate new buffer"));
+    goto drop_fail;
+  }
+
+  memcpy (GST_BUFFER_DATA (buf2), GST_BUFFER_DATA (buf), size_before);
+
+  if (is_rtcp)
+    err = srtp_protect_rtcp (filter->session, GST_BUFFER_DATA (buf2),
+        &size_after);
+  else
+    err = srtp_protect (filter->session, GST_BUFFER_DATA (buf2), &size_after);
+
+  if (err == err_status_ok) {
+    /* Buffer protected */
+    GST_BUFFER_SIZE (buf2) = size_after;
+    gst_buffer_copy_metadata (buf2, buf,
+        GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS);
+    gst_buffer_unref (buf);
+    buf = NULL;
+
+    GST_LOG_OBJECT (pad, "Sending %s buffer of size %d",
+        is_rtcp ? "RTCP" : "RTP", size_after);
+
+    /* Push buffer to source pad */
+    GST_OBJECT_UNLOCK (filter);
+    ret = gst_pad_push (otherpad, buf2);
+
+    if (ret != GST_FLOW_OK) {
+      GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), CORE, PAD, (NULL),
+          ("Unable to push buffer on source pad"));
+      goto drop_fail;
+    }
+
+  } else if (err == err_status_key_expired) {
+
+    if (filter->limit_reached == FALSE) {
+      GST_DEBUG_OBJECT (pad, "Trying to unprotect again");
+      goto unprotect;
+    } else {
+      GST_OBJECT_UNLOCK (filter);
+      GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), LIBRARY, FAILED, (NULL),
+          ("Unable to protect buffer (hard limit reached)"));
+      filter->limit_reached = FALSE;
+      goto drop_fail;
+    }
+
+  } else {                      /* srtp_protect failed */
+    GST_OBJECT_UNLOCK (filter);
+    GST_WARNING_OBJECT (pad,
+        "Unable to protect buffer (protect failed) code %d", err);
+    bufstate = buffer_drop_continue;
   }
 
   /* Drop buffer, continue or fail */
 invalid:
   if (bufstate != buffer_valid) {
-    if (!filter->limit_reached)
-      GST_WARNING_OBJECT (pad, "Dropping buffer");
+
+    GST_WARNING_OBJECT (pad, "Dropping buffer");
 
     if (buf)
       gst_buffer_unref (buf);
@@ -1256,13 +1266,16 @@ invalid:
 
     if (bufstate == buffer_drop_continue)
       ret = GST_FLOW_OK;
-    else
-      ret = GST_FLOW_ERROR;
   }
 
   gst_object_unref (filter);
 
   return ret;
+
+drop_fail:
+  gst_buffer_unref (buf);
+  gst_object_unref (filter);
+  return GST_FLOW_ERROR;
 }
 
 /* srtp_event_reporter is an event handler function that
@@ -1298,14 +1311,19 @@ srtp_send_event_reporter (srtp_event_data_t * data)
     case event_key_hard_limit:
       GST_WARNING_OBJECT (filter, "Key usage hard limit reached on stream %d",
           ssrc);
-      /* Activate flag to drop buffers from now on */
+
       if (filter) {
+        /* Activate flag to drop buffers from now on */
         filter->limit_reached = TRUE;
+        filter->wait_change = TRUE;
 
         /* Leave the door open for property change */
         GST_OBJECT_UNLOCK (filter);
+
         g_signal_emit (filter, gst_srtp_send_signals[SIGNAL_HARD_LIMIT], 0,
             ssrc, &ret);
+        filter->wait_change = FALSE;
+
         GST_OBJECT_LOCK (filter);
 
         if (ret == 0)
@@ -1316,14 +1334,17 @@ srtp_send_event_reporter (srtp_event_data_t * data)
     case event_packet_index_limit:
       GST_WARNING_OBJECT (filter, "Packet index limit reached on stream %d",
           ssrc);
-      /* Activate flag to drop buffers from now on */
+
       if (filter) {
+        /* Activate flag to drop buffers from now on */
         filter->limit_reached = TRUE;
 
         /* Leave the door open for property change */
         GST_OBJECT_UNLOCK (filter);
+
         g_signal_emit (filter, gst_srtp_send_signals[SIGNAL_INDEX_LIMIT], 0,
             ssrc, &ret);
+
         GST_OBJECT_LOCK (filter);
 
         if (ret == 0)
@@ -1368,6 +1389,7 @@ gst_srtp_send_change_state (GstElement * element, GstStateChange transition)
       break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
       gst_srtp_send_reset (filter);
+      filter->limit_reached = TRUE;
       break;
     case GST_STATE_CHANGE_READY_TO_NULL:
       break;
@@ -1466,3 +1488,7 @@ gst_srtp_send_plugin_init (GstPlugin * srtpsend)
   return gst_element_register (srtpsend, "srtpsend", GST_RANK_NONE,
       GST_TYPE_SRTPSEND);
 }
+
+#ifndef PACKAGE
+#define PACKAGE "srtpsend"
+#endif

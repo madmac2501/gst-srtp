@@ -1,5 +1,8 @@
-/* GStreamer
- * Copyright (C) <2009> Gabriel Millaire <millaire.gabriel@gmail.com>
+/*
+ * GStreamer - GStreamer SRTP encoder and decoder
+ *
+ * Copyright 2009 Collabora Ltd.
+ *  @author: Gabriel Millaire <gabriel.millaire@collabora.co.uk>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public

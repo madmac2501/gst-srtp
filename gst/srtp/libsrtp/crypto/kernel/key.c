@@ -44,7 +44,7 @@
 
 #include "key.h"
 
-#if 1
+#if 0
 #define soft_limit 0x10000
 #else
 #define soft_limit 0x50
@@ -60,7 +60,7 @@ key_limit_set (key_limit_t key, const xtd_seq_num_t s)
   if (s < soft_limit)
     return err_status_bad_param;
 #endif
-#if 1
+#if 0
   key->num_left = s;
 #else
   key->num_left = soft_limit + 50;

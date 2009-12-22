@@ -154,6 +154,7 @@ new_srtp_recv_caps (struct SrtpRecvCaps *recvcaps, gboolean key_only)
 
   /* Ask for other parameters, unless asked not to */
   if (!key_only) {
+    g_print ("asking for every parameters\n");
 
     /* Ask for the RTP cipher */
     g_print ("Please enter the RTP cipher for SSRC %d: ", recvcaps->ssrc);
@@ -271,12 +272,14 @@ get_srtp_recv_caps_by_ssrc (guint ssrc, GSList ** streams, gboolean key_only,
   }
 
   if (new_srtp_recv_caps (recvcaps, key_only) == 0) {
+    g_print ("couldn't get new caps\n");
     if (!found)
       g_slice_free (struct SrtpRecvCaps, recvcaps);
 
     return NULL;
   } else {
     /* Add to list */
+    g_print ("adding to list\n");
     if (!found)
       *streams = g_slist_prepend (*streams, recvcaps);
   }
@@ -389,6 +392,7 @@ get_caps_cb (GstElement * srtpdec, guint ssrc, GSList ** streams)
   if (recvcaps == NULL || recvcaps->key == NULL) {
     g_print ("-> Invalid parameters\n");
   } else {
+
     caps = gst_caps_new_simple ("application/x-srtp", "mkey", G_TYPE_STRING,
         recvcaps->key, "rtp-cipher", G_TYPE_UINT, recvcaps->rtp_cipher,
         "rtp-auth", G_TYPE_UINT, recvcaps->rtp_auth, "rtcp-cipher",
