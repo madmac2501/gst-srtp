@@ -67,6 +67,18 @@ typedef struct _GstSrtpSend      GstSrtpSend;
 typedef struct _GstSrtpSendClass GstSrtpSendClass;
 typedef struct _GstSrtpSendPads  GstSrtpSendPads;
 
+typedef enum
+{
+  GST_SRTP_CIPHER_NULL = 0,
+  GST_SRTP_CIPHER_AES_128_ICM
+} GstSrtpCipherType;
+
+typedef enum
+{
+  GST_SRTP_AUTH_NULL = 0,
+  GST_SRTP_AUTH_HMAC_SHA1 = 3
+} GstSrtpAuthType;
+
 typedef enum {
   ssrc_valid        = 0,
   ssrc_new          = 1,

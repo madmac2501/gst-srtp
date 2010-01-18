@@ -13,8 +13,22 @@ plugin_LTLIBRARIES = libgstsrtp.la
 #       libgstplugin_la_LDFLAGS => libmysomething_la_LDFLAGS                 #
 ##############################################################################
 
-built_sources = gstsrtp-marshal.c
-built_headers = gstsrtp-marshal.h
+srtp_headers = 		\
+	gstsrtprecv.h   \
+	gstsrtpsend.h
+
+glib_enum_headers=$(srtp_headers)
+glib_enum_define=GST_SRTP
+glib_gen_prefix=gst_srtp
+glib_gen_basename=gstsrtp
+
+built_sources =			\
+	gstsrtp-marshal.c	\
+	gstsrtp-enumtypes.c
+
+built_headers = 		\
+	gstsrtp-marshal.h	\
+	gstsrtp-enumtypes.h
 
 BUILT_SOURCES = $(built_sources) $(built_headers)
 
@@ -25,7 +39,10 @@ libgstsrtp_la_SOURCES = \
   gstsrtprecv.c
 
 nodist_libgstsrtp_la_SOURCES = \
-      $(built_sources)
+	$(built_sources)
+
+nodist_libgstsrtp_la_HEADERS = \
+	gstsrtp-enumtypes.h
 
 # flags used to compile this plugin
 # add other _CFLAGS and _LIBS as needed
@@ -40,6 +57,9 @@ noinst_HEADERS = \
   gstsrtprecv.h
 
 EXTRA_DIST = gstsrtp-marshal.list
+CLEANFILES = $(BUILT_SOURCES)
+
+include $(top_srcdir)/common/gst-glib-gen.mak
 
 SUBDIRS = libsrtp
 DIST_SUBDIRS = libsrtp

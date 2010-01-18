@@ -1263,7 +1263,3 @@ gst_srtp_recv_plugin_init (GstPlugin * srtprecv)
   return gst_element_register (srtprecv, "srtprecv", GST_RANK_NONE,
       GST_TYPE_SRTPRECV);
 }
-
-#ifndef PACKAGE
-#define PACKAGE "srtprecv"
-#endif
