@@ -173,7 +173,6 @@ static void gst_srtp_recv_get_property (GObject * object, guint prop_id,
     GValue * value, GParamSpec * pspec);
 
 static void gst_srtp_recv_clear_streams (GstSrtpRecv * filter);
-/* static gpointer mkey_copy (gpointer boxed); */
 
 static gboolean gst_srtp_recv_sink_setcaps_rtp (GstPad * pad, GstCaps * caps);
 static gboolean gst_srtp_recv_sink_setcaps_rtcp (GstPad * pad, GstCaps * caps);
@@ -198,12 +197,12 @@ static GstStateChangeReturn gst_srtp_recv_change_state (GstElement * element,
     GstStateChange transition);
 
 static GstSrtpRecv *srtp_filter;
-/* static GType key_type; */
 
 struct _GstSrtpRecvSsrcStream
 {
   guint32 ssrc;
-  guint8 *key;
+  /*guint8 *key;*/
+  GstBuffer *key;
   guint rtp_cipher;
   guint rtp_auth;
   guint rtcp_cipher;
@@ -249,8 +248,6 @@ gst_srtp_recv_class_init (GstSrtpRecvClass * klass)
   gstelement_class->change_state =
       GST_DEBUG_FUNCPTR (gst_srtp_recv_change_state);
   klass->clear_streams = GST_DEBUG_FUNCPTR (gst_srtp_recv_clear_streams);
-
-  /* key_type = g_boxed_type_register_static ("mkey", mkey_copy, g_free); */
 
   /* Install properties */
   g_object_class_install_property (gobject_class, PROP_USE_CAPS,
@@ -411,20 +408,6 @@ gst_srtp_recv_init (GstSrtpRecv * filter, GstSrtpRecvClass * gclass)
   srtp_filter = filter;
 }
 
-/*
-static gpointer mkey_copy (gpointer boxed)
-{
-  guint8 *data;
-
-  if (boxed == NULL)
-    return NULL;
-
-  data = g_new0 (guint8, 30);
-  memcpy ((void *) data, (void *) boxed, 30);
-  return data;
-}
-*/
-
 /* Find a stream structure for a given SSRC
  */
 static GstSrtpRecvSsrcStream *
@@ -469,13 +452,13 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
 {
   GstSrtpRecvSsrcStream *stream;
   GstStructure *ps;
-  const gchar *key = NULL;
-  guint len;
+  /*const gchar *key = NULL;
+  guint len;*/
 
   /* Create new stream structure and set default values */
   stream = g_slice_new0 (GstSrtpRecvSsrcStream);
   stream->ssrc = ssrc;
-  stream->key = g_new0 (guint8, SRTP_MAX_KEY_LEN);
+  /*stream->key = g_new0 (guint8, SRTP_MAX_KEY_LEN);*/
   stream->rtp_cipher = AES_128_ICM;
   stream->rtp_auth = HMAC_SHA1;
   stream->rtcp_cipher = AES_128_ICM;
@@ -486,14 +469,17 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
   if (!(ps = gst_caps_get_structure (caps, 0)))
     goto error;
 
-  if (!(key = gst_structure_get_string (ps, "mkey")))
+  if (!gst_structure_get (ps, "mkey", GST_TYPE_BUFFER, stream_key, NULL))
+    goto error;
+
+  /*if (!(key = gst_structure_get_string (ps, "mkey")))
     goto error;
 
   len = strlen (key);
   if (len > SRTP_MAX_KEY_LEN)
     len = SRTP_MAX_KEY_LEN;
 
-  memcpy ((void *) stream->key, (void *) key, len);
+  memcpy ((void *) stream->key, (void *) key, len);*/
 
   gst_structure_get_uint (ps, "rtp-cipher", &(stream->rtp_cipher));
   gst_structure_get_uint (ps, "rtp-auth", &(stream->rtp_auth));
@@ -510,7 +496,7 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
   return stream;
 
 error:
-  g_free (stream->key);
+  /*g_free (stream->key);*/
   stream->key = NULL;
   g_slice_free (GstSrtpRecvSsrcStream, stream);
   return NULL;
@@ -621,7 +607,7 @@ init_session_stream (GstSrtpRecv * filter, guint32 ssrc,
 
   policy.ssrc.value = ssrc;
   policy.ssrc.type = ssrc_specific;
-  policy.key = (guchar *) stream->key;
+  policy.key = (guchar *) GST_BUFFER_DATA (stream->key);
   policy.next = NULL;
 
   /* If it is the first stream, create the session 
@@ -686,7 +672,7 @@ validate_buffer (GstSrtpRecv * filter, GstBuffer * buf, guint32 * ssrc,
 
         if (err == err_status_ok) {
           GST_INFO_OBJECT (filter, "Stream set with SSRC %d and key [%s]",
-              *ssrc, stream->key);
+              *ssrc, GST_BUFFER_DATA (stream->key));
         } else {
           g_free (stream->key);
           stream->key = NULL;
@@ -748,6 +734,7 @@ static void
 clear_stream (GstSrtpRecvSsrcStream * stream)
 {
   g_free (stream->key);
+  stream->key = NULL;
   g_slice_free (GstSrtpRecvSsrcStream, stream);
 }
 

@@ -96,7 +96,8 @@ struct _GstSrtpSend
   GstElement element;
 
   guint32 ssrc;
-  guint8 *key;
+  /*guint8 *key;*/
+  GstBuffer *key;
   guint rtp_cipher;
   guint rtp_auth;
   guint rtcp_cipher;
