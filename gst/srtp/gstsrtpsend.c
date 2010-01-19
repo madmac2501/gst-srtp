@@ -108,7 +108,7 @@
 #include <string.h>
 
 #include "gstsrtp-marshal.h"
-
+#include "gstsrtp-enumtypes.h"
 #include "gstsrtpsend.h"
 
 GST_DEBUG_CATEGORY_STATIC (gst_srtp_send_debug);
@@ -329,25 +329,23 @@ gst_srtp_send_class_init (GstSrtpSendClass * klass)
 
   /* Install properties */
   g_object_class_install_property (gobject_class, PROP_MKEY,
-  /*    g_param_spec_string ("key", "Key", "Master key", DEFAULT_MASTER_KEY,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));*/
-      g_param_spec_boxed ("key", "Key", "Master key", GST_TYPE_BUFFER,
-     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)); 
+      g_param_spec_pointer ("key", "Key", "Master key",
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_RTP_CIPHER,
       g_param_spec_enum ("rtp-cipher", "RTP Cipher", "RTP Cipher",
-          GST_SRTP_CIPHER_TYPE, DEFAULT_RTP_CIPHER,
+          GST_TYPE_SRTP_CIPHER_TYPE, DEFAULT_RTP_CIPHER,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_RTP_AUTH,
       g_param_spec_enum ("rtp-auth", "RTP Authentication",
-          "RTP Authentication", GST_SRTP_AUTH_TYPE, DEFAULT_RTP_AUTH,
+          "RTP Authentication", GST_TYPE_SRTP_AUTH_TYPE, DEFAULT_RTP_AUTH,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_RTCP_CIPHER,
       g_param_spec_enum ("rtcp-cipher", "RTCP Cipher",
-          "RTCP Cipher", GST_SRTP_CIPHER_TYPE, DEFAULT_RTCP_CIPHER,
+          "RTCP Cipher", GST_TYPE_SRTP_CIPHER_TYPE, DEFAULT_RTCP_CIPHER,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_RTCP_AUTH,
       g_param_spec_enum ("rtcp-auth", "RTCP Authentication",
-          "RTCP Authentication", GST_SRTP_AUTH_TYPE, DEFAULT_RTCP_AUTH,
+          "RTCP Authentication", GST_TYPE_SRTP_AUTH_TYPE, DEFAULT_RTCP_AUTH,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
@@ -585,7 +583,7 @@ validate_buffer (GstSrtpSend * filter, GstBuffer * buf, gboolean is_rtcp)
         return buffer_drop_fail;
       }
 
-      err = init_new_stream (filter, filter->ssrc);s
+      err = init_new_stream (filter, filter->ssrc);
 
       if (err != err_status_ok) {
         GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), LIBRARY, SETTINGS,
@@ -786,7 +784,7 @@ gst_srtp_send_dispose (GObject * object)
     gst_iterator_resync (it);
   }
 
-  GST_CALL_PARENT(G_OBJECT_CLASS, dispose, (object));
+  GST_CALL_PARENT (G_OBJECT_CLASS, dispose, (object));
 }
 
 /* Set property
@@ -795,8 +793,8 @@ static void
 gst_srtp_send_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec)
 {
-  /*const gchar *key;*/
-  guint len;
+  /* GstBuffer *buf; */
+  gchar *tmp2;
 
   GstSrtpSend *filter = GST_SRTPSEND (object);
 
@@ -806,17 +804,19 @@ gst_srtp_send_set_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_MKEY:
-      /*g_free (filter->key);
-      filter->key = g_new0 (guint8, SRTP_MAX_KEY_LEN);
-      key = g_value_get_string (value);
-      len = strlen (key);
-      if (len > SRTP_MAX_KEY_LEN)
-        len = SRTP_MAX_KEY_LEN;
-      memcpy ((void *) filter->key, (void *) key, len);
-      GST_INFO_OBJECT (object, "Set property: key=[%s]", filter->key);*/
-      g_free (filter->key);
-      filter->key = g_boxed_copy (GST_TYPE_BUFFER, g_value_get_boxed (value));
-      GST_INFO_OBJECT (object, "Set property: key=[%30s]", (gchar *) GST_BUFFER_DATA (filter->key));
+      /* g_free (filter->key);
+         buf = (GstBuffer *) g_value_get_pointer (value);
+         filter->key = gst_buffer_new_and_alloc (GST_BUFFER_SIZE (buf) + 1);
+         memcpy ((void *) GST_BUFFER_DATA (filter->key), (void *) GST_BUFFER_DATA (buf), GST_BUFFER_SIZE (buf));
+         GST_BUFFER_DATA (filter->key)[GST_BUFFER_SIZE (buf)] = '\0'; */
+
+      tmp2 = g_new0 (gchar, 10);
+      sprintf (tmp2, "baf");
+      filter->key = gst_buffer_new_and_alloc (4);
+      memcpy ((void *) GST_BUFFER_DATA (filter->key), (void *) tmp2, 4);
+
+      GST_INFO_OBJECT (object, "Set property: key=[%s][%s]",
+          GST_BUFFER_DATA (filter->key), tmp2);
       filter->limit_reached = FALSE;
       break;
 
@@ -860,8 +860,8 @@ gst_srtp_send_get_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_MKEY:
-      /*g_value_set_string (value, (gchar *) filter->key);*/
-      g_value_set_boxed (value, filter->key);
+      /*g_value_set_string (value, (gchar *) filter->key); */
+      g_value_set_pointer (value, filter->key);
       break;
     case PROP_RTP_CIPHER:
       g_value_set_enum (value, filter->rtp_cipher);
@@ -1153,8 +1153,8 @@ unprotect:
     filter->ask_setcaps = FALSE;
     GST_OBJECT_UNLOCK (filter);
 
-    if (!gst_srtp_send_sink_setcaps (pad, GST_PAD_CAPS (pad), is_rtcp, FALSE)) {
-      ret = GST_FLOW_NOT_NEGOCIATED;
+    if (!gst_srtp_send_sink_setcaps (pad, GST_PAD_CAPS (pad), is_rtcp)) {
+      ret = GST_FLOW_NOT_NEGOTIATED;
       goto drop_fail;
     }
 

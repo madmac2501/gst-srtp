@@ -89,7 +89,7 @@
  * <refsect2>
  * <title>Example pipeline</title>
  * |[
- * gst-launch-0.10 udpsrc port=33333 caps="application/x-rtp,mkey=(string)bafbafbaf,..." ! srtprecv use_caps=TRUE ! rtpspeexdepay ! speexdec ! alsasink
+ * gst-launch-0.10 udpsrc port=33333 caps="application/x-rtp,mkey=(string)bafbafbaf,..." ! rtpspeexdepay ! speexdec ! alsasink
  * ]| Receive SPEEX SRTP or SRTCP packets through UDP using caps to specify
  * master key and protection. It outs RTP or SRTP packets.
  * </refsect2>
@@ -111,8 +111,6 @@
 GST_DEBUG_CATEGORY_STATIC (gst_srtp_recv_debug);
 #define GST_CAT_DEFAULT gst_srtp_recv_debug
 
-#define DEFAULT_USE_CAPS TRUE
-
 /* Filter signals and args */
 enum
 {
@@ -127,8 +125,7 @@ enum
 
 enum
 {
-  PROP_0,
-  PROP_USE_CAPS
+  PROP_0
 };
 
 /* the capabilities of the inputs and outputs.
@@ -201,7 +198,7 @@ static GstSrtpRecv *srtp_filter;
 struct _GstSrtpRecvSsrcStream
 {
   guint32 ssrc;
-  /*guint8 *key;*/
+  /*guint8 *key; */
   GstBuffer *key;
   guint rtp_cipher;
   guint rtp_auth;
@@ -248,12 +245,6 @@ gst_srtp_recv_class_init (GstSrtpRecvClass * klass)
   gstelement_class->change_state =
       GST_DEBUG_FUNCPTR (gst_srtp_recv_change_state);
   klass->clear_streams = GST_DEBUG_FUNCPTR (gst_srtp_recv_clear_streams);
-
-  /* Install properties */
-  g_object_class_install_property (gobject_class, PROP_USE_CAPS,
-      g_param_spec_boolean ("use-caps", "Use caps",
-          "Use caps before signal?", DEFAULT_USE_CAPS,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
    * GstSrtpRecv::get-caps:
@@ -402,7 +393,6 @@ gst_srtp_recv_init (GstSrtpRecv * filter, GstSrtpRecvClass * gclass)
   gst_element_add_pad (GST_ELEMENT (filter), filter->rtcp_sinkpad);
   gst_element_add_pad (GST_ELEMENT (filter), filter->rtcp_srcpad);
 
-  filter->use_caps = DEFAULT_USE_CAPS;
   filter->ask_update = FALSE;
   filter->first_session = TRUE;
   srtp_filter = filter;
@@ -453,12 +443,14 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
   GstSrtpRecvSsrcStream *stream;
   GstStructure *ps;
   /*const gchar *key = NULL;
-  guint len;*/
+     guint len; */
+  GstBuffer *buf;
 
   /* Create new stream structure and set default values */
   stream = g_slice_new0 (GstSrtpRecvSsrcStream);
   stream->ssrc = ssrc;
-  /*stream->key = g_new0 (guint8, SRTP_MAX_KEY_LEN);*/
+  /*stream->key = g_new0 (guint8, SRTP_MAX_KEY_LEN); */
+  stream->key = NULL;
   stream->rtp_cipher = AES_128_ICM;
   stream->rtp_auth = HMAC_SHA1;
   stream->rtcp_cipher = AES_128_ICM;
@@ -469,17 +461,33 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
   if (!(ps = gst_caps_get_structure (caps, 0)))
     goto error;
 
-  if (!gst_structure_get (ps, "mkey", GST_TYPE_BUFFER, stream_key, NULL))
+  if (!gst_structure_get (ps, "mkey", GST_TYPE_BUFFER, &buf, NULL))
     goto error;
+  else {
+    if (buf) {
+      stream->key = gst_buffer_new_and_alloc (GST_BUFFER_SIZE (buf) + 1);
+      memcpy ((void *) GST_BUFFER_DATA (stream->key),
+          (void *) GST_BUFFER_DATA (buf), GST_BUFFER_SIZE (buf));
+      GST_BUFFER_DATA (stream->key)[GST_BUFFER_SIZE (buf)] = '\0';
+
+      GST_WARNING ("HAVE mkey IN STRUCTURE [%c][%c]", GST_BUFFER_DATA (buf)[1],
+          GST_BUFFER_DATA (stream->key)[1]);
+      GST_WARNING ("mkey=[%s] len=%d", GST_BUFFER_DATA (stream->key),
+          GST_BUFFER_SIZE (stream->key));
+    } else {
+      GST_WARNING ("NULL mkey");
+      goto error;
+    }
+  }
 
   /*if (!(key = gst_structure_get_string (ps, "mkey")))
-    goto error;
+     goto error;
 
-  len = strlen (key);
-  if (len > SRTP_MAX_KEY_LEN)
-    len = SRTP_MAX_KEY_LEN;
+     len = strlen (key);
+     if (len > SRTP_MAX_KEY_LEN)
+     len = SRTP_MAX_KEY_LEN;
 
-  memcpy ((void *) stream->key, (void *) key, len);*/
+     memcpy ((void *) stream->key, (void *) key, len); */
 
   gst_structure_get_uint (ps, "rtp-cipher", &(stream->rtp_cipher));
   gst_structure_get_uint (ps, "rtp-auth", &(stream->rtp_auth));
@@ -496,7 +504,7 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
   return stream;
 
 error:
-  /*g_free (stream->key);*/
+  /*g_free (stream->key); */
   stream->key = NULL;
   g_slice_free (GstSrtpRecvSsrcStream, stream);
   return NULL;
@@ -646,13 +654,11 @@ validate_buffer (GstSrtpRecv * filter, GstBuffer * buf, guint32 * ssrc,
     if (stream == NULL) {
       /* Policy not found or caps has changed */
 
-      if (filter->use_caps) {
-        /* Get srtp-specific params from caps */
-        GST_INFO_OBJECT (filter, "Using caps for srtp-specific parameters");
-        if ((caps = gst_buffer_get_caps (buf))) {
-          stream = get_stream_from_caps (caps, *ssrc);
-          gst_caps_unref (caps);
-        }
+      /* Get srtp-specific params from caps */
+      GST_INFO_OBJECT (filter, "Using caps for srtp-specific parameters");
+      if ((caps = gst_buffer_get_caps (buf))) {
+        stream = get_stream_from_caps (caps, *ssrc);
+        gst_caps_unref (caps);
       }
 
       if (stream == NULL) {
@@ -797,10 +803,6 @@ gst_srtp_recv_set_property (GObject * object, guint prop_id,
   GST_OBJECT_LOCK (filter);
 
   switch (prop_id) {
-    case PROP_USE_CAPS:
-      filter->use_caps = g_value_get_boolean (value);
-      GST_DEBUG_OBJECT (object, "set use_caps : %d", filter->use_caps);
-      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -819,9 +821,6 @@ gst_srtp_recv_get_property (GObject * object, guint prop_id,
   GST_OBJECT_LOCK (filter);
 
   switch (prop_id) {
-    case PROP_USE_CAPS:
-      g_value_set_boolean (value, filter->use_caps);
-      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;

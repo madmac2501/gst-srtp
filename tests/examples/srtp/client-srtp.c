@@ -68,7 +68,7 @@
 struct SrtpRecvCaps
 {
   guint ssrc;
-  gchar *key;
+  GstBuffer *key;
   int rtp_cipher;
   int rtp_auth;
   int rtcp_cipher;
@@ -111,7 +111,7 @@ get_user_input (gchar * input, int len)
   if (input == NULL || len < 1)
     return -1;
 
-  fgets (input, len, stdin);
+  input = fgets (input, len, stdin);
 
   if (input[0] == '\n') {
     return 0;
@@ -138,7 +138,8 @@ new_srtp_recv_caps (struct SrtpRecvCaps *recvcaps, gboolean key_only)
 
   input = g_new0 (gchar, 81);
   if (recvcaps->key == NULL)
-    recvcaps->key = g_new0 (gchar, 30);
+    /*recvcaps->key = g_new0 (gchar, 30); */
+    recvcaps->key = gst_buffer_new ();
 
   /* Ask for the master key */
   g_print ("Please enter the master key for SSRC %d: ", recvcaps->ssrc);
@@ -150,7 +151,8 @@ new_srtp_recv_caps (struct SrtpRecvCaps *recvcaps, gboolean key_only)
     return 0;
   }
 
-  memcpy ((void *) recvcaps->key, (void *) input, strlen (input));
+  /*memcpy ((void *) recvcaps->key, (void *) input, strlen (input)); */
+  gst_buffer_set_data (recvcaps->key, (guint8 *) input, strlen (input));
 
   /* Ask for other parameters, unless asked not to */
   if (!key_only) {
@@ -393,7 +395,7 @@ get_caps_cb (GstElement * srtpdec, guint ssrc, GSList ** streams)
     g_print ("-> Invalid parameters\n");
   } else {
 
-    caps = gst_caps_new_simple ("application/x-srtp", "mkey", G_TYPE_STRING,
+    caps = gst_caps_new_simple ("application/x-srtp", "mkey", GST_TYPE_BUFFER,
         recvcaps->key, "rtp-cipher", G_TYPE_UINT, recvcaps->rtp_cipher,
         "rtp-auth", G_TYPE_UINT, recvcaps->rtp_auth, "rtcp-cipher",
         G_TYPE_UINT, recvcaps->rtcp_cipher, "rtcp-auth", G_TYPE_UINT,
@@ -416,7 +418,7 @@ new_caps_cb (GstElement * srtpdec, guint ssrc, GSList ** streams)
   if (recvcaps == NULL || recvcaps->key == NULL) {
     g_print ("-> Invalid parameters\n");
   } else {
-    caps = gst_caps_new_simple ("application/x-srtp", "mkey", G_TYPE_STRING,
+    caps = gst_caps_new_simple ("application/x-srtp", "mkey", GST_TYPE_BUFFER,
         recvcaps->key, "rtp-cipher", G_TYPE_UINT, recvcaps->rtp_cipher,
         "rtp-auth", G_TYPE_UINT, recvcaps->rtp_auth, "rtcp-cipher",
         G_TYPE_UINT, recvcaps->rtcp_cipher, "rtcp-auth", G_TYPE_UINT,
@@ -439,7 +441,7 @@ hard_limit_cb (GstElement * srtpdec, guint ssrc, GSList ** streams)
   if (recvcaps == NULL || recvcaps->key == NULL) {
     g_print ("-> Invalid parameters\n");
   } else {
-    caps = gst_caps_new_simple ("application/x-srtp", "mkey", G_TYPE_STRING,
+    caps = gst_caps_new_simple ("application/x-srtp", "mkey", GST_TYPE_BUFFER,
         recvcaps->key, "rtp-cipher", G_TYPE_UINT, recvcaps->rtp_cipher,
         "rtp-auth", G_TYPE_UINT, recvcaps->rtp_auth, "rtcp-cipher",
         G_TYPE_UINT, recvcaps->rtcp_cipher, "rtcp-auth", G_TYPE_UINT,
@@ -471,7 +473,7 @@ index_limit_cb (GstElement * srtpdec, guint ssrc, GSList ** streams)
   if (recvcaps == NULL || recvcaps->key == NULL) {
     g_print ("-> Invalid parameters\n");
   } else {
-    caps = gst_caps_new_simple ("application/x-srtp", "mkey", G_TYPE_STRING,
+    caps = gst_caps_new_simple ("application/x-srtp", "mkey", GST_TYPE_BUFFER,
         recvcaps->key, "rtp-cipher", G_TYPE_UINT, recvcaps->rtp_cipher,
         "rtp-auth", G_TYPE_UINT, recvcaps->rtp_auth, "rtcp-cipher",
         G_TYPE_UINT, recvcaps->rtcp_cipher, "rtcp-auth", G_TYPE_UINT,

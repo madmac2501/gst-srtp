@@ -38,6 +38,7 @@ libgstsrtp_la_SOURCES = \
   gstsrtpsend.c \
   gstsrtprecv.c
 
+libgstsrtp_ladir = 
 nodist_libgstsrtp_la_SOURCES = \
 	$(built_sources)
 

@@ -104,7 +104,6 @@ struct _GstSrtpSend
   guint rtcp_auth;
 
   srtp_t session;
-  gboolean use_caps;
   gboolean first_session;
   gboolean ask_setcaps;
   gboolean limit_reached;

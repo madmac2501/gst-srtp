@@ -74,7 +74,6 @@ struct _GstSrtpRecv
   GstPad *rtp_sinkpad, *rtp_srcpad;
   GstPad *rtcp_sinkpad, *rtcp_srcpad;
 
-  gboolean use_caps;
   gboolean ask_update;
   srtp_t session;
   gboolean first_session;

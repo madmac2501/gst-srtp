@@ -62,7 +62,7 @@
 
 struct SrtpSendCaps
 {
-  gchar *key;
+  GstBuffer *key;
   guint rtp_cipher;
   guint rtp_auth;
   guint rtcp_cipher;
@@ -121,7 +121,7 @@ get_user_input (gchar * input, int len)
   if (input == NULL || len < 1)
     return -1;
 
-  fgets (input, len, stdin);
+  input = fgets (input, len, stdin);
 
   if (input[0] == '\n') {
     return 0;
@@ -152,7 +152,8 @@ get_srtp_recv_caps (guint ssrc, struct SrtpSendCaps *sendcaps,
   input = g_new0 (gchar, 81);
 
   g_free (sendcaps->key);
-  sendcaps->key = g_new0 (gchar, 30);
+  sendcaps->key = NULL;
+  /*sendcaps->key = g_new0 (gchar, 30); */
 
   /* Ask for the master key */
   g_print ("Please enter the master key for SSRC %d: ", ssrc);
@@ -161,11 +162,14 @@ get_srtp_recv_caps (guint ssrc, struct SrtpSendCaps *sendcaps,
   if (ret < 1) {
     g_print ("You failed to specify a master key\n\n");
     g_free (input);
-    g_free (sendcaps->key);
+    /*g_free (sendcaps->key); */
     return 0;
   }
 
-  memcpy ((void *) sendcaps->key, (void *) input, strlen (input));
+  /*memcpy ((void *) sendcaps->key, (void *) input, strlen (input)); */
+  sendcaps->key = gst_buffer_new_and_alloc (strlen (input));
+  memcpy ((void *) GST_BUFFER_DATA (sendcaps->key), (void *) input,
+      strlen (input));
 
   /* Ask for other parameters, unless asked not to */
   if (key_only == FALSE) {
@@ -282,7 +286,7 @@ soft_limit_cb (GstElement * srtpenc, guint ssrc, struct SrtpSendCaps *sendcaps)
 static int
 check_args (int argc, char *argv[], struct SrtpSendCaps *sendcaps)
 {
-  int len;
+  unsigned int len;
 
   if (sendcaps == NULL) {
     g_print ("\nError: NULL pointer");
@@ -309,7 +313,7 @@ check_args (int argc, char *argv[], struct SrtpSendCaps *sendcaps)
     return 0;
   } else {
 
-    sendcaps->key = g_new0 (gchar, 30);
+    /*sendcaps->key = g_new0 (gchar, 30); */
 
     /* copy key to structure */
     len = strlen (argv[1]);
@@ -319,8 +323,12 @@ check_args (int argc, char *argv[], struct SrtpSendCaps *sendcaps)
       len = 30;
     }
 
-    memcpy ((void *) sendcaps->key, (void *) argv[1], len);
-    g_print ("\nMaster key: %s\n", sendcaps->key);
+    /*memcpy ((void *) sendcaps->key, (void *) argv[1], len); */
+    sendcaps->key = gst_buffer_new_and_alloc (len);
+    memcpy ((void *) GST_BUFFER_DATA (sendcaps->key), (void *) argv[1], len);
+    /*gst_buffer_set_data (sendcaps->key, (guint8 *) argv[1], len); */
+
+    g_print ("\nMaster key: [%s]\n", GST_BUFFER_DATA (sendcaps->key));
 
     /* get cipher and auth */
     if (argc > 2 && !g_str_has_prefix (argv[2], "--")) {
@@ -375,12 +383,13 @@ main (int argc, char *argv[])
   GstIteratorResult itres;
   struct SrtpSendCaps *sendcaps;
 
-  sendcaps = g_slice_new0 (struct SrtpSendCaps);
-  if (check_args (argc, argv, sendcaps) == 0)
-    return 0;
-
   /* always init first */
   gst_init (&argc, &argv);
+
+  sendcaps = g_slice_new0 (struct SrtpSendCaps);
+
+  if (check_args (argc, argv, sendcaps) == 0)
+    return 0;
 
   /* the pipeline to hold everything */
   pipeline = gst_pipeline_new (NULL);
