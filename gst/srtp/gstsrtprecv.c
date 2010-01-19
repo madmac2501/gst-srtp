@@ -198,7 +198,6 @@ static GstSrtpRecv *srtp_filter;
 struct _GstSrtpRecvSsrcStream
 {
   guint32 ssrc;
-  /*guint8 *key; */
   GstBuffer *key;
   guint rtp_cipher;
   guint rtp_auth;
@@ -442,14 +441,11 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
 {
   GstSrtpRecvSsrcStream *stream;
   GstStructure *ps;
-  /*const gchar *key = NULL;
-     guint len; */
   GstBuffer *buf;
 
   /* Create new stream structure and set default values */
   stream = g_slice_new0 (GstSrtpRecvSsrcStream);
   stream->ssrc = ssrc;
-  /*stream->key = g_new0 (guint8, SRTP_MAX_KEY_LEN); */
   stream->key = NULL;
   stream->rtp_cipher = AES_128_ICM;
   stream->rtp_auth = HMAC_SHA1;
@@ -465,14 +461,12 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
     goto error;
   else {
     if (buf) {
-      stream->key = gst_buffer_new_and_alloc (GST_BUFFER_SIZE (buf) + 1);
+      GST_DEBUG ("[%p][%p]", GST_BUFFER_DATA (buf), buf);
+      stream->key = gst_buffer_new_and_alloc (GST_BUFFER_SIZE (buf));
       memcpy ((void *) GST_BUFFER_DATA (stream->key),
           (void *) GST_BUFFER_DATA (buf), GST_BUFFER_SIZE (buf));
-      GST_BUFFER_DATA (stream->key)[GST_BUFFER_SIZE (buf)] = '\0';
 
-      GST_WARNING ("HAVE mkey IN STRUCTURE [%c][%c]", GST_BUFFER_DATA (buf)[1],
-          GST_BUFFER_DATA (stream->key)[1]);
-      GST_WARNING ("mkey=[%s] len=%d", GST_BUFFER_DATA (stream->key),
+      GST_DEBUG ("mkey=[%s] len=%d", GST_BUFFER_DATA (stream->key),
           GST_BUFFER_SIZE (stream->key));
     } else {
       GST_WARNING ("NULL mkey");
@@ -504,8 +498,6 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
   return stream;
 
 error:
-  /*g_free (stream->key); */
-  stream->key = NULL;
   g_slice_free (GstSrtpRecvSsrcStream, stream);
   return NULL;
 }
@@ -680,8 +672,7 @@ validate_buffer (GstSrtpRecv * filter, GstBuffer * buf, guint32 * ssrc,
           GST_INFO_OBJECT (filter, "Stream set with SSRC %d and key [%s]",
               *ssrc, GST_BUFFER_DATA (stream->key));
         } else {
-          g_free (stream->key);
-          stream->key = NULL;
+          gst_buffer_unref (stream->key);
           g_slice_free (GstSrtpRecvSsrcStream, stream);
           stream = NULL;
           GST_WARNING_OBJECT (filter,
@@ -724,8 +715,7 @@ new_session_stream_from_caps (GstSrtpRecv * filter, guint32 ssrc,
     err = init_session_stream (filter, ssrc, stream);
 
     if (err != err_status_ok) {
-      g_free (stream->key);
-      stream->key = NULL;
+      gst_buffer_unref (stream->key);
       g_slice_free (GstSrtpRecvSsrcStream, stream);
       stream = NULL;
     } else {
@@ -739,9 +729,9 @@ new_session_stream_from_caps (GstSrtpRecv * filter, guint32 ssrc,
 static void
 clear_stream (GstSrtpRecvSsrcStream * stream)
 {
-  g_free (stream->key);
-  stream->key = NULL;
+  gst_buffer_unref (stream->key);
   g_slice_free (GstSrtpRecvSsrcStream, stream);
+  stream = NULL;
 }
 
 /* Clear the policy list

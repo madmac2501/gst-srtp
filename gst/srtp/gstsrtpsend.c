@@ -629,7 +629,6 @@ gst_srtp_send_reset (GstSrtpSend * filter)
   filter->limit_reached = FALSE;
   filter->wait_change = FALSE;
   filter->first_session = TRUE;
-  g_free (filter->key);
 
   GST_OBJECT_UNLOCK (filter);
 }
@@ -784,6 +783,8 @@ gst_srtp_send_dispose (GObject * object)
     gst_iterator_resync (it);
   }
 
+  gst_buffer_unref (filter->key);
+
   GST_CALL_PARENT (G_OBJECT_CLASS, dispose, (object));
 }
 
@@ -793,8 +794,8 @@ static void
 gst_srtp_send_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec)
 {
-  /* GstBuffer *buf; */
-  gchar *tmp2;
+  GstBuffer *buf;
+  /*gchar *tmp2; */
 
   GstSrtpSend *filter = GST_SRTPSEND (object);
 
@@ -804,19 +805,24 @@ gst_srtp_send_set_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_MKEY:
-      /* g_free (filter->key);
-         buf = (GstBuffer *) g_value_get_pointer (value);
-         filter->key = gst_buffer_new_and_alloc (GST_BUFFER_SIZE (buf) + 1);
-         memcpy ((void *) GST_BUFFER_DATA (filter->key), (void *) GST_BUFFER_DATA (buf), GST_BUFFER_SIZE (buf));
-         GST_BUFFER_DATA (filter->key)[GST_BUFFER_SIZE (buf)] = '\0'; */
+      gst_buffer_unref (filter->key);
+      buf = (GstBuffer *) g_value_get_pointer (value);
+      filter->key = gst_buffer_new_and_alloc (GST_BUFFER_SIZE (buf));
+      memcpy ((void *) GST_BUFFER_DATA (filter->key),
+          (void *) GST_BUFFER_DATA (buf), GST_BUFFER_SIZE (buf));
 
-      tmp2 = g_new0 (gchar, 10);
-      sprintf (tmp2, "baf");
-      filter->key = gst_buffer_new_and_alloc (4);
-      memcpy ((void *) GST_BUFFER_DATA (filter->key), (void *) tmp2, 4);
+      /* This code is to test the key = "baf" */
+      /* tmp2 = g_new0 (gchar, 10);
+         sprintf (tmp2, "baf");
+         gst_buffer_unref (filter->key);
+         filter->key = gst_buffer_new_and_alloc (3);
+         memcpy ((void *) GST_BUFFER_DATA (filter->key), (void *) tmp2, 3);
+         memcpy ((void *) tmp2, (void *) GST_BUFFER_DATA (filter->key), 3);
+         tmp2[3] = '\0'; */
 
-      GST_INFO_OBJECT (object, "Set property: key=[%s][%s]",
-          GST_BUFFER_DATA (filter->key), tmp2);
+      GST_DEBUG ("%p", GST_BUFFER_DATA (filter->key));
+      GST_INFO_OBJECT (object, "Set property: key=[%s]",
+          GST_BUFFER_DATA (filter->key));
       filter->limit_reached = FALSE;
       break;
 
@@ -860,7 +866,6 @@ gst_srtp_send_get_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_MKEY:
-      /*g_value_set_string (value, (gchar *) filter->key); */
       g_value_set_pointer (value, filter->key);
       break;
     case PROP_RTP_CIPHER:
