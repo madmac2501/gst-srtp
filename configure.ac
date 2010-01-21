@@ -170,10 +170,10 @@ fi
 
 AC_MSG_CHECKING(which random device to use)
 if test "$enable_kernel_linux" = "yes"; then
-   RNG_OBJS=rand_linux_kernel.o
+   SRTP_RNG=linux
    AC_MSG_RESULT([Linux kernel builtin])
 else
-   RNG_OBJS=rand_source.o
+   SRTP_RNG=source
    if test -n "$DEV_URANDOM"; then
       AC_DEFINE_UNQUOTED(DEV_URANDOM, "$DEV_URANDOM",[Path to random device])
       AC_MSG_RESULT([$DEV_URANDOM])
@@ -181,7 +181,9 @@ else
       AC_MSG_RESULT([standard rand() function...])
    fi
 fi
-AC_SUBST(RNG_OBJS)
+AM_CONDITIONAL(SRTP_RNG_LINUX, test "x$SRTP_RNG" = "xlinux")
+
+AC_SUBST(SRTP_RNG)
 
 
 dnl Checks for header files.
@@ -315,7 +317,7 @@ AC_MSG_RESULT($enable_console)
 AC_MSG_CHECKING(whether to use GDOI key management)
 AC_ARG_ENABLE(gdoi,
   [AS_HELP_STRING([--enable-gdoi], [enable GDOI key management])],
-  [], enable_gdoi=no)
+  [], [enable_gdoi=no])
 if test "$enable_gdoi" = "yes"; then
    AC_DEFINE(SRTP_GDOI, 1, [Define to use GDOI.])
    GDOI_OBJS=gdoi/srtp+gdoi.o
@@ -2111,8 +2113,6 @@ gst/siren/Makefile
 gst/speed/Makefile
 gst/srtp/Makefile
 gst/srtp/libsrtp/Makefile
-gst/srtp/libsrtp/crypto/Makefile
-gst/srtp/libsrtp/doc/Makefile
 gst/subenc/Makefile
 gst/stereo/Makefile
 gst/tta/Makefile

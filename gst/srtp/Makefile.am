@@ -40,15 +40,13 @@ libgstsrtp_la_SOURCES = \
 
 libgstsrtp_ladir = 
 nodist_libgstsrtp_la_SOURCES = \
-	$(built_sources)
-
-nodist_libgstsrtp_la_HEADERS = \
-	gstsrtp-enumtypes.h
+	$(built_sources) \
+	$(built_headers)
 
 # flags used to compile this plugin
 # add other _CFLAGS and _LIBS as needed
 libgstsrtp_la_CFLAGS = /usr/lib $(GST_CFLAGS)
-libgstsrtp_la_LIBADD = $(GST_LIBS) $(GST_PLUGINS_BASE_LIBS) $(GSTCTRL_LIBS) $(GSTRTP_LIBS) $(GSTPB_BASE_LIBS) libsrtp/libsrtp.a
+libgstsrtp_la_LIBADD = $(GST_LIBS) $(GST_PLUGINS_BASE_LIBS) $(GSTCTRL_LIBS) $(GSTRTP_LIBS) $(GSTPB_BASE_LIBS) libsrtp/libsrtp.la
 libgstsrtp_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 libgstsrtp_la_LIBTOOLFLAGS = --tag=disable-static
 
@@ -63,4 +61,3 @@ CLEANFILES = $(BUILT_SOURCES)
 include $(top_srcdir)/common/gst-glib-gen.mak
 
 SUBDIRS = libsrtp
-DIST_SUBDIRS = libsrtp
