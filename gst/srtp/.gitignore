@@ -1,2 +1,4 @@
 gstsrtp-enumtypes.c
 gstsrtp-enumtypes.h
+gstsrtp-marshal.h
+gstsrtp-marshal.c
