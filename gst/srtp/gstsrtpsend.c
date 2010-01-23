@@ -329,8 +329,8 @@ gst_srtp_send_class_init (GstSrtpSendClass * klass)
 
   /* Install properties */
   g_object_class_install_property (gobject_class, PROP_MKEY,
-      g_param_spec_pointer ("key", "Key", "Master key",
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+      gst_param_spec_mini_object ("key", "Key", "Master key",
+          GST_TYPE_BUFFER, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_RTP_CIPHER,
       g_param_spec_enum ("rtp-cipher", "RTP Cipher", "RTP Cipher",
           GST_TYPE_SRTP_CIPHER_TYPE, DEFAULT_RTP_CIPHER,
@@ -576,13 +576,6 @@ validate_buffer (GstSrtpSend * filter, GstBuffer * buf, gboolean is_rtcp)
     if (state == ssrc_new) {
       /* New session (or property/caps changed) : create stream */
 
-      /* Check if key is valid */
-      if (!filter->key) {
-        GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), LIBRARY, SETTINGS,
-            (NULL), ("No master key property specified"));
-        return buffer_drop_fail;
-      }
-
       err = init_new_stream (filter, filter->ssrc);
 
       if (err != err_status_ok) {
@@ -783,7 +776,8 @@ gst_srtp_send_dispose (GObject * object)
     gst_iterator_resync (it);
   }
 
-  gst_buffer_unref (filter->key);
+  if (filter->key)
+    gst_buffer_unref (filter->key);
 
   GST_CALL_PARENT (G_OBJECT_CLASS, dispose, (object));
 }
@@ -794,9 +788,6 @@ static void
 gst_srtp_send_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec)
 {
-  GstBuffer *buf;
-  /*gchar *tmp2; */
-
   GstSrtpSend *filter = GST_SRTPSEND (object);
 
   GST_OBJECT_LOCK (filter);
@@ -805,20 +796,9 @@ gst_srtp_send_set_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_MKEY:
-      gst_buffer_unref (filter->key);
-      buf = (GstBuffer *) g_value_get_pointer (value);
-      filter->key = gst_buffer_new_and_alloc (GST_BUFFER_SIZE (buf));
-      memcpy ((void *) GST_BUFFER_DATA (filter->key),
-          (void *) GST_BUFFER_DATA (buf), GST_BUFFER_SIZE (buf));
-
-      /* This code is to test the key = "baf" */
-      /* tmp2 = g_new0 (gchar, 10);
-         sprintf (tmp2, "baf");
-         gst_buffer_unref (filter->key);
-         filter->key = gst_buffer_new_and_alloc (3);
-         memcpy ((void *) GST_BUFFER_DATA (filter->key), (void *) tmp2, 3);
-         memcpy ((void *) tmp2, (void *) GST_BUFFER_DATA (filter->key), 3);
-         tmp2[3] = '\0'; */
+      if (filter->key)
+        gst_buffer_unref (filter->key);
+      filter->key = GST_BUFFER (gst_value_dup_mini_object (value));
 
       GST_DEBUG ("%p", GST_BUFFER_DATA (filter->key));
       GST_INFO_OBJECT (object, "Set property: key=[%s]",
@@ -866,7 +846,8 @@ gst_srtp_send_get_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_MKEY:
-      g_value_set_pointer (value, filter->key);
+      if (filter->key)
+        gst_value_set_mini_object (value, GST_MINI_OBJECT_CAST (filter->key));
       break;
     case PROP_RTP_CIPHER:
       g_value_set_enum (value, filter->rtp_cipher);
@@ -1347,6 +1328,10 @@ gst_srtp_send_change_state (GstElement * element, GstStateChange transition)
 
   switch (transition) {
     case GST_STATE_CHANGE_NULL_TO_READY:
+      if (!filter->key) {
+        GST_ERROR_OBJECT (element, "Need a key to get to READY");
+        return GST_STATE_CHANGE_FAILURE;
+      }
       srtp_install_event_handler (srtp_send_event_reporter);
       if (!filter->first_session)
         gst_srtp_send_reset (filter);
