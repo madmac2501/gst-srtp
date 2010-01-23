@@ -212,7 +212,7 @@ gst_srtp_recv_base_init (gpointer gclass)
   GstElementClass *element_class = GST_ELEMENT_CLASS (gclass);
 
   static const GstElementDetails srtprecv_details =
-      GST_ELEMENT_DETAILS ("SrtpRecv",
+      GST_ELEMENT_DETAILS ("SRTP decoder",
       "Filter/Network/SrtpRecv",
       "Implement an SRTP to RTP filter",
       "Gabriel Millaire <millaire.gabriel@gmail.com>");

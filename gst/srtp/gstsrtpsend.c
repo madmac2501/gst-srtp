@@ -289,7 +289,7 @@ gst_srtp_send_base_init (gpointer gclass)
   GstElementClass *element_class = GST_ELEMENT_CLASS (gclass);
 
   static const GstElementDetails srtpsend_details =
-      GST_ELEMENT_DETAILS ("SrtpSend",
+      GST_ELEMENT_DETAILS ("SRTP encoder",
       "Filter/Network/SRTP",
       "Implement an RTP to SRTP filter",
       "Gabriel Millaire <millaire.gabriel@gmail.com>");
