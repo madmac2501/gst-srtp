@@ -998,27 +998,30 @@ static GstCaps *
 gst_srtp_send_sink_getcaps (GstPad * pad, gboolean is_rtcp)
 {
   GstPad *otherpad;
-  GstStructure *ps = NULL;
   GstCaps *ret = NULL;
+  int i;
 
   otherpad = (GstPad *) gst_pad_get_element_private (pad);
 
-  if (!(ret = gst_pad_get_allowed_caps (otherpad))) {
-    ret = gst_caps_copy (gst_pad_get_pad_template_caps (pad));
-  } else {
+  ret = gst_pad_get_allowed_caps (otherpad);
+  if (!ret)
+    goto return_template;
 
-    if (!(ps = gst_caps_get_structure (ret, 0))) {
-      gst_caps_unref (ret);
-      ret = gst_caps_copy (gst_pad_get_pad_template_caps (pad));
-    } else {
-      if (is_rtcp)
-        gst_structure_set_name (ps, "application/x-rtcp");
-      else
-        gst_structure_set_name (ps, "application/x-rtp");
-    }
+  ret = gst_caps_make_writable (ret);
+
+  for (i = 0; i < gst_caps_get_size (ret); i++) {
+    GstStructure *ps = gst_caps_get_structure (ret, i);
+    if (is_rtcp)
+      gst_structure_set_name (ps, "application/x-rtcp");
+    else
+      gst_structure_set_name (ps, "application/x-rtp");
   }
 
   return ret;
+
+return_template:
+
+  return gst_caps_copy (gst_pad_get_pad_template_caps (pad));
 }
 
 /* RTP pad internal_links function
