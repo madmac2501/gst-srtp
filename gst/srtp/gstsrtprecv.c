@@ -832,10 +832,27 @@ gst_srtp_recv_sink_setcaps (GstPad * pad, GstCaps * caps, gboolean is_rtcp)
 
   filter = GST_SRTPRECV (gst_pad_get_parent (pad));
 
-  caps = gst_caps_copy (caps);
-
   ps = gst_caps_get_structure (caps, 0);
 
+  if (gst_structure_has_field_typed (ps, "ssrc", G_TYPE_UINT) &&
+      gst_structure_has_field_typed (ps, "mkey", GST_TYPE_BUFFER) &&
+      gst_structure_has_field_typed (ps, "rtp-cipher", G_TYPE_UINT) &&
+      gst_structure_has_field_typed (ps, "rtp-auth", G_TYPE_UINT) &&
+      gst_structure_has_field_typed (ps, "rtcp-cipher", G_TYPE_UINT) &&
+      gst_structure_has_field_typed (ps, "rtcp-auth", G_TYPE_UINT)) {
+    guint ssrc;
+
+    gst_structure_get_uint (ps, "ssrc", &ssrc);
+
+    if (!new_session_stream_from_caps (filter, ssrc, caps)) {
+      GST_ERROR_OBJECT (pad, "Could not create session from pad caps");
+      gst_object_unref (filter);
+      return FALSE;
+    }
+  }
+
+  caps = gst_caps_copy (caps);
+  ps = gst_caps_get_structure (caps, 0);
   gst_structure_remove_field (ps, "mkey");
   gst_structure_remove_field (ps, "rtp-cipher");
   gst_structure_remove_field (ps, "rtp-auth");
