@@ -457,31 +457,12 @@ get_stream_from_caps (GstCaps * caps, guint32 ssrc)
   if (!(ps = gst_caps_get_structure (caps, 0)))
     goto error;
 
-  if (!gst_structure_get (ps, "mkey", GST_TYPE_BUFFER, &buf, NULL))
+  if (!gst_structure_get (ps, "mkey", GST_TYPE_BUFFER, &buf, NULL) || !buf) {
     goto error;
-  else {
-    if (buf) {
-      GST_DEBUG ("[%p][%p]", GST_BUFFER_DATA (buf), buf);
-      stream->key = gst_buffer_new_and_alloc (GST_BUFFER_SIZE (buf));
-      memcpy ((void *) GST_BUFFER_DATA (stream->key),
-          (void *) GST_BUFFER_DATA (buf), GST_BUFFER_SIZE (buf));
-
-      GST_DEBUG ("mkey=[%s] len=%d", GST_BUFFER_DATA (stream->key),
-          GST_BUFFER_SIZE (stream->key));
-    } else {
-      GST_WARNING ("NULL mkey");
-      goto error;
-    }
+  } else {
+    GST_DEBUG ("[%p][%p]", GST_BUFFER_DATA (buf), buf);
+    stream->key = buf;
   }
-
-  /*if (!(key = gst_structure_get_string (ps, "mkey")))
-     goto error;
-
-     len = strlen (key);
-     if (len > SRTP_MAX_KEY_LEN)
-     len = SRTP_MAX_KEY_LEN;
-
-     memcpy ((void *) stream->key, (void *) key, len); */
 
   gst_structure_get_uint (ps, "rtp-cipher", &(stream->rtp_cipher));
   gst_structure_get_uint (ps, "rtp-auth", &(stream->rtp_auth));
