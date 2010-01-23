@@ -931,13 +931,15 @@ gst_srtp_send_sink_setcaps (GstPad * pad, GstCaps * caps, gboolean is_rtcp)
   GstSrtpSend *filter = NULL;
   GstPad *otherpad = NULL;
   GstStructure *ps = NULL;
+  gboolean ret;
+
+  g_return_val_if_fail (gst_caps_is_fixed (caps), FALSE);
 
   filter = GST_SRTPSEND (gst_pad_get_parent (pad));
 
-  caps = gst_caps_make_writable (caps);
+  caps = gst_caps_copy (caps);
 
-  if (!(ps = gst_caps_get_structure (caps, 0)))
-    goto error_caps;
+  ps = gst_caps_get_structure (caps, 0);
 
   GST_DEBUG_OBJECT (pad, "Sink caps: %" GST_PTR_FORMAT, caps);
 
@@ -962,17 +964,12 @@ gst_srtp_send_sink_setcaps (GstPad * pad, GstCaps * caps, gboolean is_rtcp)
   /* Set caps on source pad */
   otherpad = get_rtp_other_pad (pad);
 
-  if (!gst_pad_set_caps (otherpad, caps))
-    goto error_caps;
+  ret = gst_pad_set_caps (otherpad, caps);
 
+  gst_caps_unref (caps);
   gst_object_unref (filter);
 
-  return TRUE;
-
-error_caps:
-  GST_ELEMENT_ERROR (GST_ELEMENT_CAST (filter), CORE, CAPS, (NULL),
-      ("Unable to set caps on source pad"));
-  return GST_FLOW_NOT_NEGOTIATED;
+  return ret;
 }
 
 /* RTP pad getcaps function
