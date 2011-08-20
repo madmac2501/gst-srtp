@@ -219,6 +219,8 @@ static gboolean gst_srtp_send_src_event_rtcp (GstPad * pad, GstEvent * event);
 static gboolean gst_srtp_send_src_event (GstPad * pad, GstEvent * event,
     gboolean is_rtcp);
 
+static void srtp_send_event_reporter (srtp_event_data_t * data);
+
 static GstStateChangeReturn gst_srtp_send_change_state (GstElement * element,
     GstStateChange transition);
 
@@ -288,14 +290,6 @@ gst_srtp_send_base_init (gpointer gclass)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (gclass);
 
-  static const GstElementDetails srtpsend_details =
-      GST_ELEMENT_DETAILS ("SRTP encoder",
-      "Filter/Network/SRTP",
-      "Implement an RTP to SRTP filter",
-      "Gabriel Millaire <millaire.gabriel@gmail.com>");
-
-  gst_element_class_set_details (element_class, &srtpsend_details);
-
   gst_element_class_add_pad_template (element_class,
       gst_static_pad_template_get (&rtp_src_template));
   gst_element_class_add_pad_template (element_class,
@@ -304,6 +298,11 @@ gst_srtp_send_base_init (gpointer gclass)
       gst_static_pad_template_get (&rtcp_src_template));
   gst_element_class_add_pad_template (element_class,
       gst_static_pad_template_get (&rtcp_sink_template));
+
+  gst_element_class_set_details_simple (element_class, "SRTP encoder",
+      "Filter/Network/SRTP",
+      "Implement an RTP to SRTP filter",
+      "Gabriel Millaire <millaire.gabriel@gmail.com>");
 }
 
 /* initialize the srtpsend's class
@@ -1239,7 +1238,7 @@ drop_fail:
 /* srtp_event_reporter is an event handler function that
  * reports the events that are reported by the libsrtp callbacks
  */
-void
+static void
 srtp_send_event_reporter (srtp_event_data_t * data)
 {
   GstSrtpSend *filter = srtp_filter;

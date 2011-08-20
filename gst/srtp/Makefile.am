@@ -45,8 +45,10 @@ nodist_libgstsrtp_la_SOURCES = \
 
 # flags used to compile this plugin
 # add other _CFLAGS and _LIBS as needed
-libgstsrtp_la_CFLAGS = /usr/lib $(GST_CFLAGS)
-libgstsrtp_la_LIBADD = $(GST_LIBS) $(GST_PLUGINS_BASE_LIBS) $(GSTCTRL_LIBS) $(GSTRTP_LIBS) $(GSTPB_BASE_LIBS) libsrtp/libsrtp.la
+libgstsrtp_la_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_CFLAGS)
+libgstsrtp_la_LIBADD = $(GST_PLUGINS_BASE_LIBS) \
+		-lgstrtp-@GST_MAJORMINOR@ \
+		$(GST_BASE_LIBS) $(GST_LIBS) libsrtp/libsrtp.la
 libgstsrtp_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 libgstsrtp_la_LIBTOOLFLAGS = --tag=disable-static
 
