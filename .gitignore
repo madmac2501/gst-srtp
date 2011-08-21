@@ -50,3 +50,5 @@ gst*orc.h
 /tests/examples/shapewipe/shapewipe-example
 /tests/examples/jack/jack_client
 /tests/examples/opencv/gstmotioncells_dynamic_test
+/tests/examples/srtp/client-srtp
+/tests/examples/srtp/server-srtp

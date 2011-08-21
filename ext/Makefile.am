@@ -330,6 +330,12 @@ else
 SPC_DIR=
 endif
 
+if USE_SRTP
+SRTP_DIR=srtp
+else
+SRTP_DIR=
+endif
+
 if USE_GME
 GME_DIR=gme
 else
@@ -435,6 +441,7 @@ SUBDIRS=\
 	$(SOUNDTOUCH_DIR) \
 	$(GME_DIR) \
 	$(SPC_DIR) \
+	$(SRTP_DIR) \
 	$(SWFDEC_DIR) \
 	$(TELETEXTDEC_DIR) \
 	$(TIMIDITY_DIR) \
@@ -486,6 +493,7 @@ DIST_SUBDIRS = \
 	sndfile \
 	soundtouch \
 	spc \
+	srtp \
 	gme \
 	swfdec \
 	teletextdec \

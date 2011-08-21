@@ -1,17 +1,4 @@
-# plugindir is set in configure
-
-##############################################################################
-# change libgstplugin.la to something more suitable, e.g. libmysomething.la  #
-##############################################################################
 plugin_LTLIBRARIES = libgstsrtp.la
-
-##############################################################################
-# for the next set of variables, rename the prefix if you renamed the .la,   #
-#  e.g. libgstplugin_la_SOURCES => libmysomething_la_SOURCES                 #
-#       libgstplugin_la_CFLAGS  => libmysomething_la_CFLAGS                  #
-#       libgstplugin_la_LIBADD  => libmysomething_la_LIBADD                  #
-#       libgstplugin_la_LDFLAGS => libmysomething_la_LDFLAGS                 #
-##############################################################################
 
 srtp_headers = 		\
 	gstsrtprecv.h   \
@@ -38,7 +25,6 @@ libgstsrtp_la_SOURCES = \
   gstsrtpsend.c \
   gstsrtprecv.c
 
-libgstsrtp_ladir = 
 nodist_libgstsrtp_la_SOURCES = \
 	$(built_sources) \
 	$(built_headers)
@@ -48,7 +34,7 @@ nodist_libgstsrtp_la_SOURCES = \
 libgstsrtp_la_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_CFLAGS)
 libgstsrtp_la_LIBADD = $(GST_PLUGINS_BASE_LIBS) \
 		-lgstrtp-@GST_MAJORMINOR@ \
-		$(GST_BASE_LIBS) $(GST_LIBS) libsrtp/libsrtp.la
+		$(GST_BASE_LIBS) $(GST_LIBS) $(SRTP_LIBS)
 libgstsrtp_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 libgstsrtp_la_LIBTOOLFLAGS = --tag=disable-static
 
@@ -61,5 +47,3 @@ EXTRA_DIST = gstsrtp-marshal.list
 CLEANFILES = $(BUILT_SOURCES)
 
 include $(top_srcdir)/common/gst-glib-gen.mak
-
-SUBDIRS = libsrtp
